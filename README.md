@@ -4,7 +4,7 @@ API REST para gestión de tareas construida con **Node.js + Express + PostgreSQL
 
 ## Arquitectura
 
-![alt text](image.png)
+![Arquitectura](image.png)
 
 ```
 ┌─────────────────────────────────────────┐
