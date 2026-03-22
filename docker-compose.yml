@@ -1,0 +1,54 @@
+# Orquestando todos los servicios de la aplicación.
+
+services:
+
+  # Servicio de la API 
+  api:
+    build:
+      context: ./app        # Busca el Dockerfile dentro de /app
+    container_name: tasks-api
+    restart: unless-stopped  # Se reinicia solo si cae inesperadamente
+    ports:
+      - "${PORT}:3000"       # Expone el puerto al mundo: HOST:CONTENEDOR
+    environment:             # Variables de entorno desde el archivo .env
+      - PORT=${PORT}
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+    depends_on:
+      db:
+        condition: service_healthy  # Espera a que PostgreSQL esté listo
+    networks:
+      - app-network           # Red interna, no expuesta al exterior
+
+  #Servicio de PostgreSQL
+  db:
+    image: postgres:16-alpine  # Imagen oficial, versión estable y liviana
+    container_name: tasks-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data  # Persistencia de datos
+    networks:
+      - app-network           # Misma red interna que la API
+    healthcheck:              # Verifica que PostgreSQL esté listo antes de iniciar la API
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+# Volúmenes
+# Docker gestiona este volumen. Si el contenedor se destruye, los datos en este volumen sobreviven.
+volumes:
+  postgres-data:
+
+#Redes 
+# Red interna aislada. La BD no es accesible desde internet, solo desde los servicios dentro de esta red.
+networks:
+  app-network:
+    driver: bridge
