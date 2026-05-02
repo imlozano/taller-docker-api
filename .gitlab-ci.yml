@@ -1,0 +1,35 @@
+# ============================================================
+# Pipeline de CI 
+# ============================================================
+
+
+# Imagen Docker base que se usará para correr los jobs.
+# node:20-alpine es la misma que usa el Dockerfile en producción,
+# así garantizamos consistencia entre CI y el entorno real.
+image: node:20-alpine
+
+# Variables de entorno disponibles en todos los jobs.
+variables:
+  # Le decimos a GitLab dónde vive el código Node.
+  APP_DIR: app
+
+# Etapas (stages) del pipeline. Se ejecutan en este orden.
+# Si una falla, las siguientes NO corren.
+stages:
+  - install
+
+# ------------------------------------------------------------
+# JOB: install_dependencies
+# ------------------------------------------------------------
+# Instala las dependencias del proyecto usando npm ci, que es
+# la versión "estricta" de npm install: solo instala lo que está
+# en package-lock.json, sin permitir desviaciones.
+# Esto garantiza builds reproducibles.
+# ------------------------------------------------------------
+install_dependencies:
+  stage: install
+  script:
+    - echo "Instalando dependencias en $APP_DIR..."
+    - cd $APP_DIR
+    - npm ci
+    - echo "Dependencias instaladas correctamente"
