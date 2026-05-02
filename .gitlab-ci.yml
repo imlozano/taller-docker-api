@@ -2,17 +2,13 @@
 # Pipeline de CI/CD para taller-docker-api
 # ============================================================
 # Se ejecuta automaticamente en cada push al repositorio.
-# Valida el codigo y (mas adelante) lo despliega al servidor.
+# Valida el codigo y lo despliega al servidor de produccion.
 # ============================================================
 
-# Imagen Docker base por defecto para los jobs.
-# node:20-alpine es la misma del Dockerfile de produccion.
 image: node:20-alpine
 
 variables:
   APP_DIR: app
-  # Nombre de la imagen Docker que construiremos en el stage build.
-  # Lo definimos como variable para reutilizarlo si crece el pipeline.
   IMAGE_NAME: taller-docker-api
 
 stages:
@@ -20,6 +16,7 @@ stages:
   - audit
   - lint
   - build
+  - deploy
 
 # ------------------------------------------------------------
 # JOB: install_dependencies
@@ -63,22 +60,12 @@ code_lint:
 # ------------------------------------------------------------
 # JOB: docker_build
 # ------------------------------------------------------------
-# Construye la imagen Docker de la API para validar que el
-# Dockerfile sigue siendo valido. Si la imagen no se puede
-# construir, el pipeline falla y bloquea la integracion.
-#
-# Usa Docker-in-Docker (dind): un Docker daemon corre como
-# servicio paralelo y la imagen 'docker:24' se conecta a el.
-# ------------------------------------------------------------
 docker_build:
   stage: build
-  # Sobreescribimos la imagen por defecto. Necesitamos el cliente
-  # docker, no node, para este job.
   image: docker:24
   services:
     - docker:24-dind
   variables:
-    # Le decimos al cliente docker como hablar con el daemon.
     DOCKER_HOST: tcp://docker:2375
     DOCKER_TLS_CERTDIR: ""
   script:
@@ -87,3 +74,55 @@ docker_build:
     - docker build -t $IMAGE_NAME:$CI_COMMIT_SHORT_SHA .
     - echo "Imagen Docker construida exitosamente"
     - docker images $IMAGE_NAME
+
+# ------------------------------------------------------------
+# JOB: deploy_to_production
+# ------------------------------------------------------------
+# Despliega los cambios al servidor de produccion via SSH.
+# Solo se ejecuta en la rama 'main' (rama protegida) y solo
+# si todos los stages anteriores pasaron correctamente.
+#
+# Usa Variables Protegidas de GitLab (Settings > CI/CD > Variables):
+#   - SSH_PRIVATE_KEY: llave SSH privada (tipo File)
+#   - DEPLOY_USER: usuario SSH del servidor
+#   - DEPLOY_HOST: IP/hostname del servidor
+#
+# El servidor debe tener la llave publica correspondiente en
+# ~/.ssh/authorized_keys y el repositorio clonado en
+# ~/taller-docker-api con remote apuntando a GitLab.
+# ------------------------------------------------------------
+deploy_to_production:
+  stage: deploy
+  # Imagen ligera con cliente SSH instalado
+  image: alpine:3.19
+  # Solo desplegar desde la rama main
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+  before_script:
+    # Instalar dependencias necesarias para SSH
+    - apk add --no-cache openssh-client
+    # Preparar el directorio SSH y configurar la llave privada
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    # Copiar la llave privada al lugar correcto con permisos seguros
+    # SSH_PRIVATE_KEY es de tipo File: la variable contiene la RUTA al archivo
+    - cp "$SSH_PRIVATE_KEY" ~/.ssh/id_ed25519
+    - chmod 600 ~/.ssh/id_ed25519
+    # Agregar el host del servidor a known_hosts para evitar prompts
+    - ssh-keyscan -H $DEPLOY_HOST >> ~/.ssh/known_hosts 2>/dev/null
+  script:
+    - echo "Desplegando a $DEPLOY_USER@$DEPLOY_HOST..."
+    - |
+      ssh $DEPLOY_USER@$DEPLOY_HOST "
+        set -e
+        echo '--- Entrando al directorio del proyecto ---'
+        cd ~/taller-docker-api
+        echo '--- Trayendo cambios desde GitLab ---'
+        git pull origin main
+        echo '--- Reconstruyendo y reiniciando contenedores ---'
+        docker compose down
+        docker compose up -d --build
+        echo '--- Verificando estado de los contenedores ---'
+        docker ps
+      "
+    - echo "Despliegue completado exitosamente"
