@@ -9,7 +9,7 @@ COPY package*.json ./
 
 # Instalar solo dependencias de producción.
 # --omit=dev excluye nodemon y otras herramientas de desarrollo
-RUN npm install --omit=dev
+RUN npm ci --omit=dev
 
 # Copiar el resto del código fuente
 COPY . .
