@@ -19,7 +19,12 @@ app.use(express.json());      // Parsea el body de las peticiones como JSON
 // ── Rutas --
 // Health check: Para verificar que el servidor está vivo
 app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.status(200).json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    version: '1.0.0',
+    environment: process.env.NODE_ENV || 'production',
+  });
 });
 
 app.use('/tasks', taskRoutes); // Todas las rutas de tasks
