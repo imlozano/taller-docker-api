@@ -1,6 +1,6 @@
 # Tasks API — Taller Docker Compose 🐳
 
-API REST para gestión de tareas construida con **Node.js + Express + PostgreSQL**, desplegada con **Docker Compose**.
+API REST para gestión de tareas construida con **Node.js + Express + PostgreSQL**, desplegada con **Docker Compose** e integrada con **GitLab CI/CD**.
 
 ## Arquitectura
 
@@ -38,7 +38,7 @@ API REST para gestión de tareas construida con **Node.js + Express + PostgreSQL
 ### Pasos
 ```bash
 # 1. Clonar el repositorio
-git clone https://github.com/TU-USUARIO/taller-docker-api.git
+git clone https://gitlab.com/imlozano/taller-docker-api.git
 cd taller-docker-api
 
 # 2. Crear el archivo de variables de entorno
@@ -56,7 +56,7 @@ curl http://localhost:3000/health
 
 | Método | Ruta | Descripción |
 |---|---|---|
-| GET | `/health` | Estado del servidor |
+| GET | `/health` | Estado del servidor (incluye version y environment) |
 | GET | `/tasks` | Listar todas las tareas |
 | GET | `/tasks/:id` | Obtener tarea por ID |
 | POST | `/tasks` | Crear tarea |
@@ -87,7 +87,7 @@ curl -X DELETE http://localhost:3000/tasks/1
 | Variable | Descripción | Ejemplo |
 |---|---|---|
 | `PORT` | Puerto del servidor | `3000` |
-| `DB_HOST` | Host de la BD (nombre del servicio) | `db` |
+| `DB_HOST` | Host de la BD | `db` |
 | `DB_PORT` | Puerto de PostgreSQL | `5432` |
 | `DB_NAME` | Nombre de la base de datos | `tasksdb` |
 | `DB_USER` | Usuario de PostgreSQL | `taskuser` |
@@ -104,9 +104,68 @@ docker compose down -v  # El flag -v elimina los volúmenes
 
 ## Despliegue
 
-La aplicación está desplegada en DigitalOcean.
+La aplicación está desplegada en DigitalOcean con despliegue automático.
 
-**URL pública:** `http://TU-IP-AQUI:3000`
+**URL pública:** `http://134.199.218.201:3000`
+
+---
+
+## 🚀 Pipeline de CI/CD
+
+Este proyecto cuenta con un pipeline de Integración Continua y Despliegue Continuo (CI/CD) configurado en **GitLab CI/CD**, definido en el archivo `.gitlab-ci.yml` ubicado en la raíz del repositorio.
+
+### ¿Cómo se activa?
+
+El pipeline **se dispara automáticamente** ante cualquier `git push` al repositorio. El estado del pipeline (éxito o fallo) es visible en la sección **Build -> Pipelines** de GitLab.
+
+No requiere ejecución manual. Cada commit empujado a la rama `main` ejecuta el flujo completo, incluyendo el despliegue al servidor de producción.
+
+### ¿Qué hace el pipeline?
+
+El pipeline está organizado en **5 stages secuenciales** que validan el código y lo despliegan automáticamente:
+
+| Stage | Job | Descripción |
+|---|---|---|
+| 1. `install` | `install_dependencies` | Instala las dependencias usando `npm ci` (modo estricto basado en `package-lock.json`). Genera artefactos `node_modules` reutilizables por los siguientes jobs. |
+| 2. `audit` | `security_audit` | Ejecuta `npm audit --audit-level=high --omit=dev` para detectar vulnerabilidades de seguridad altas o críticas en dependencias de producción. |
+| 3. `lint` | `code_lint` | Ejecuta ESLint con reglas configuradas (`eqeqeq`, `quotes single`, `no-unused-vars`) para validar la calidad y consistencia del código JavaScript. |
+| 4. `build` | `docker_build` | Construye la imagen Docker (`docker build`) usando Docker-in-Docker (`docker:24-dind`) para validar que el `Dockerfile` es funcional y reproducible. |
+| 5. `deploy` | `deploy_to_production` | Despliega los cambios al servidor de producción (DigitalOcean) vía SSH. Solo se ejecuta en la rama `main` y si todos los stages anteriores pasaron correctamente. |
+
+### Flujo del despliegue automático (stage `deploy`)
+
+1. Configura el cliente SSH usando la llave privada inyectada desde Variables Protegidas.
+2. Se conecta al servidor mediante `ssh $DEPLOY_USER@$DEPLOY_HOST`.
+3. En el servidor, ejecuta:
+   - `git pull origin main` para traer los últimos cambios.
+   - `docker compose down` para detener los contenedores actuales.
+   - `docker compose up -d --build` para reconstruir y levantar la nueva versión.
+4. Verifica el estado de los contenedores con `docker ps`.
+
+### Variables Protegidas de GitLab
+
+Las credenciales sensibles **nunca están hardcodeadas** en el pipeline. Se gestionan desde **Settings → CI/CD → Variables** en GitLab:
+
+| Variable | Tipo | Flag | Uso |
+|---|---|---|---|
+| `SSH_PRIVATE_KEY` | File | Protected | Llave SSH privada para autenticarse al servidor |
+| `DEPLOY_USER` | Variable | Protected | Usuario SSH del servidor (`root`) |
+| `DEPLOY_HOST` | Variable | Protected | IP pública del servidor |
+
+El flag `Protected` asegura que estas variables solo se exponen en pipelines ejecutados sobre ramas protegidas (como `main`), evitando que ramas no autorizadas accedan a credenciales.
+
+### Configuración de seguridad adicional
+
+El proyecto incluye protecciones contra ataques de cadena de suministro de npm (relevantes en 2026):
+
+- **`.npmrc`** con `ignore-scripts=true` para mitigar ataques tipo Axios (marzo 2026) y Mini Shai-Hulud (abril 2026).
+- **`save-exact=true`** para fijar versiones exactas y evitar auto-actualizaciones a versiones potencialmente comprometidas.
+- **`package-lock.json`** comprometido en el repositorio para builds reproducibles.
+
+El servidor de producción cuenta con:
+- **UFW firewall** configurado.
+- **fail2ban** monitoreando intentos de autenticación SSH.
+- **Llave SSH dedicada** exclusivamente para el deploy automatizado.
 
 ## Comandos útiles
 ```bash
