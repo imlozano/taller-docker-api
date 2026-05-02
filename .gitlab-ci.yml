@@ -5,29 +5,18 @@
 # Valida el codigo y (mas adelante) lo despliega al servidor.
 # ============================================================
 
-# Imagen Docker base que se usara para correr los jobs.
-# node:20-alpine es la misma que usa el Dockerfile en produccion,
-# asi garantizamos consistencia entre CI y el entorno real.
 image: node:20-alpine
 
-# Variables de entorno disponibles en todos los jobs.
 variables:
-  # Le decimos a GitLab donde vive el codigo Node.
   APP_DIR: app
 
-# Etapas (stages) del pipeline. Se ejecutan en este orden.
-# Si una falla, las siguientes NO corren.
 stages:
   - install
   - audit
+  - lint
 
 # ------------------------------------------------------------
 # JOB: install_dependencies
-# ------------------------------------------------------------
-# Instala las dependencias del proyecto usando npm ci, que es
-# la version "estricta" de npm install: solo instala lo que esta
-# en package-lock.json, sin permitir desviaciones.
-# Esto garantiza builds reproducibles.
 # ------------------------------------------------------------
 install_dependencies:
   stage: install
@@ -36,8 +25,6 @@ install_dependencies:
     - cd $APP_DIR
     - npm ci
     - echo "Dependencias instaladas correctamente"
-  # Guardamos node_modules para que los siguientes jobs lo reusen
-  # sin reinstalar todo. expire_in evita acumular artefactos viejos.
   artifacts:
     paths:
       - $APP_DIR/node_modules
@@ -45,11 +32,6 @@ install_dependencies:
 
 # ------------------------------------------------------------
 # JOB: security_audit
-# ------------------------------------------------------------
-# Audita las dependencias en busca de vulnerabilidades conocidas.
-# Si encuentra alguna de severidad "high" o "critical", el job falla
-# y bloquea el pipeline. Esto evita que codigo vulnerable se
-# integre al repositorio.
 # ------------------------------------------------------------
 security_audit:
   stage: audit
@@ -59,3 +41,19 @@ security_audit:
     - cd $APP_DIR
     - npm audit --audit-level=high --omit=dev
     - echo "Auditoria completada sin vulnerabilidades altas o criticas"
+
+# ------------------------------------------------------------
+# JOB: code_lint
+# ------------------------------------------------------------
+# Valida el estilo y calidad del codigo JavaScript usando ESLint.
+# Detecta errores de sintaxis, variables sin usar, comparaciones
+# con == en vez de ===, comillas inconsistentes, etc.
+# ------------------------------------------------------------
+code_lint:
+  stage: lint
+  needs: ["install_dependencies"]
+  script:
+    - echo "Validando codigo con ESLint en $APP_DIR..."
+    - cd $APP_DIR
+    - npm run lint
+    - echo "Codigo cumple con los estandares de calidad"
