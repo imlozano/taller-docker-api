@@ -1,28 +1,31 @@
 # ============================================================
-# Pipeline de CI 
+# Pipeline de CI/CD para taller-docker-api
+# ============================================================
+# Se ejecuta automaticamente en cada push al repositorio.
+# Valida el codigo y (mas adelante) lo despliega al servidor.
 # ============================================================
 
-
-# Imagen Docker base que se usará para correr los jobs.
-# node:20-alpine es la misma que usa el Dockerfile en producción,
-# así garantizamos consistencia entre CI y el entorno real.
+# Imagen Docker base que se usara para correr los jobs.
+# node:20-alpine es la misma que usa el Dockerfile en produccion,
+# asi garantizamos consistencia entre CI y el entorno real.
 image: node:20-alpine
 
 # Variables de entorno disponibles en todos los jobs.
 variables:
-  # Le decimos a GitLab dónde vive el código Node.
+  # Le decimos a GitLab donde vive el codigo Node.
   APP_DIR: app
 
 # Etapas (stages) del pipeline. Se ejecutan en este orden.
 # Si una falla, las siguientes NO corren.
 stages:
   - install
+  - audit
 
 # ------------------------------------------------------------
 # JOB: install_dependencies
 # ------------------------------------------------------------
 # Instala las dependencias del proyecto usando npm ci, que es
-# la versión "estricta" de npm install: solo instala lo que está
+# la version "estricta" de npm install: solo instala lo que esta
 # en package-lock.json, sin permitir desviaciones.
 # Esto garantiza builds reproducibles.
 # ------------------------------------------------------------
@@ -33,3 +36,26 @@ install_dependencies:
     - cd $APP_DIR
     - npm ci
     - echo "Dependencias instaladas correctamente"
+  # Guardamos node_modules para que los siguientes jobs lo reusen
+  # sin reinstalar todo. expire_in evita acumular artefactos viejos.
+  artifacts:
+    paths:
+      - $APP_DIR/node_modules
+    expire_in: 1 hour
+
+# ------------------------------------------------------------
+# JOB: security_audit
+# ------------------------------------------------------------
+# Audita las dependencias en busca de vulnerabilidades conocidas.
+# Si encuentra alguna de severidad "high" o "critical", el job falla
+# y bloquea el pipeline. Esto evita que codigo vulnerable se
+# integre al repositorio.
+# ------------------------------------------------------------
+security_audit:
+  stage: audit
+  needs: ["install_dependencies"]
+  script:
+    - echo "Auditando dependencias de produccion en $APP_DIR..."
+    - cd $APP_DIR
+    - npm audit --audit-level=high --omit=dev
+    - echo "Auditoria completada sin vulnerabilidades altas o criticas"
