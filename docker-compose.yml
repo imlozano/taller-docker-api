@@ -12,6 +12,7 @@ services:
       - "${PORT}:3000"       # Expone el puerto al mundo: HOST:CONTENEDOR
     environment:             # Variables de entorno desde el archivo .env
       - PORT=${PORT}
+      - NODE_ENV=production
       - DB_HOST=${DB_HOST}
       - DB_PORT=${DB_PORT}
       - DB_NAME=${DB_NAME}
