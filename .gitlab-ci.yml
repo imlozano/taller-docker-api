@@ -5,15 +5,21 @@
 # Valida el codigo y (mas adelante) lo despliega al servidor.
 # ============================================================
 
+# Imagen Docker base por defecto para los jobs.
+# node:20-alpine es la misma del Dockerfile de produccion.
 image: node:20-alpine
 
 variables:
   APP_DIR: app
+  # Nombre de la imagen Docker que construiremos en el stage build.
+  # Lo definimos como variable para reutilizarlo si crece el pipeline.
+  IMAGE_NAME: taller-docker-api
 
 stages:
   - install
   - audit
   - lint
+  - build
 
 # ------------------------------------------------------------
 # JOB: install_dependencies
@@ -45,10 +51,6 @@ security_audit:
 # ------------------------------------------------------------
 # JOB: code_lint
 # ------------------------------------------------------------
-# Valida el estilo y calidad del codigo JavaScript usando ESLint.
-# Detecta errores de sintaxis, variables sin usar, comparaciones
-# con == en vez de ===, comillas inconsistentes, etc.
-# ------------------------------------------------------------
 code_lint:
   stage: lint
   needs: ["install_dependencies"]
@@ -57,3 +59,31 @@ code_lint:
     - cd $APP_DIR
     - npm run lint
     - echo "Codigo cumple con los estandares de calidad"
+
+# ------------------------------------------------------------
+# JOB: docker_build
+# ------------------------------------------------------------
+# Construye la imagen Docker de la API para validar que el
+# Dockerfile sigue siendo valido. Si la imagen no se puede
+# construir, el pipeline falla y bloquea la integracion.
+#
+# Usa Docker-in-Docker (dind): un Docker daemon corre como
+# servicio paralelo y la imagen 'docker:24' se conecta a el.
+# ------------------------------------------------------------
+docker_build:
+  stage: build
+  # Sobreescribimos la imagen por defecto. Necesitamos el cliente
+  # docker, no node, para este job.
+  image: docker:24
+  services:
+    - docker:24-dind
+  variables:
+    # Le decimos al cliente docker como hablar con el daemon.
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+  script:
+    - echo "Construyendo imagen Docker desde $APP_DIR/Dockerfile..."
+    - cd $APP_DIR
+    - docker build -t $IMAGE_NAME:$CI_COMMIT_SHORT_SHA .
+    - echo "Imagen Docker construida exitosamente"
+    - docker images $IMAGE_NAME
