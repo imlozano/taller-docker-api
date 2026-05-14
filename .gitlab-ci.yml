@@ -121,8 +121,9 @@ deploy_to_production:
         set -e
         echo '--- Entrando al directorio del proyecto ---'
         cd ~/taller-docker-api
-        echo '--- Trayendo cambios desde GitLab ---'
-        git pull origin main
+        echo '--- Sincronizando codigo con el remoto (idempotente y resiliente a force-push) ---'
+        git fetch origin main
+        git reset --hard origin/main
         echo '--- Reconstruyendo y reiniciando contenedores ---'
         docker compose down
         docker compose up -d --build
