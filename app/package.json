@@ -3,6 +3,10 @@
   "version": "1.0.0",
   "description": "API REST de tareas con Node.js, Express y PostgreSQL",
   "main": "src/index.js",
+  "packageManager": "pnpm@11.1.1",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
