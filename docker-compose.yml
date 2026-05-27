@@ -44,6 +44,23 @@ services:
       timeout: 5s
       retries: 5
 
+  # cAdvisor: métricas por contenedor (CPU, memoria, red, I/O)
+  # Solo expuesto en loopback; lo raspa Alloy desde el host.
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: tasks-cadvisor
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    networks:
+      - app-network
+
   caddy:
     image: caddy:2-alpine
     container_name: tasks-caddy

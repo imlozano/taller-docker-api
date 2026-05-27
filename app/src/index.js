@@ -6,8 +6,10 @@ const express = require('express');
 const cors = require('cors');
 
 const { initDB } = require('./config/database');
+const { register } = require('./config/metrics');
 const taskRoutes = require('./routes/taskRoutes');
 const errorHandler = require('./middlewares/errorHandler');
+const metricsMiddleware = require('./middlewares/metricsMiddleware');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -26,6 +28,7 @@ app.use(cors({
 }));
 
 app.use(express.json());      // Parsea el body de las peticiones como JSON
+app.use(metricsMiddleware);   // Mide todas las peticiones (RED: rate/errors/duration)
 
 // ── Rutas --
 // Health check: Para verificar que el servidor está vivo
@@ -39,6 +42,13 @@ app.get('/health', (req, res) => {
 });
 
 app.use('/tasks', taskRoutes); // Todas las rutas de tasks
+
+// Endpoint de métricas para que Grafana Alloy lo raspe (scrape).
+// Caddy bloquea /metrics desde internet; solo se accede por loopback.
+app.get('/metrics', async (req, res) => {
+  res.set('Content-Type', register.contentType);
+  res.end(await register.metrics());
+});
 
 // Ruta no encontrada (404) --
 app.use((req, res) => {
