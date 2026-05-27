@@ -44,28 +44,6 @@ services:
       timeout: 5s
       retries: 5
 
-  # cAdvisor: métricas por contenedor (CPU, memoria, red, I/O).
-  # Solo expuesto en loopback; lo raspa Alloy desde el host.
-  # En Ubuntu con cgroups v2 hace falta el socket de Docker para que
-  # cAdvisor descubra los contenedores; los flags acotan la cardinalidad.
-  cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.52.1
-    container_name: tasks-cadvisor
-    restart: unless-stopped
-    command:
-      - '--docker_only=true'
-      - '--store_container_labels=false'
-      - '--whitelisted_container_labels=com.docker.compose.service,com.docker.compose.project'
-    ports:
-      - "127.0.0.1:8080:8080"
-    volumes:
-      - /:/rootfs:ro
-      - /sys:/sys:ro
-      - /var/lib/docker/:/var/lib/docker:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-    networks:
-      - app-network
-
   caddy:
     image: caddy:2-alpine
     container_name: tasks-caddy
