@@ -49,7 +49,7 @@ services:
   # En Ubuntu con cgroups v2 hace falta el socket de Docker para que
   # cAdvisor descubra los contenedores; los flags acotan la cardinalidad.
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    image: gcr.io/cadvisor/cadvisor:v0.52.1
     container_name: tasks-cadvisor
     restart: unless-stopped
     command:
