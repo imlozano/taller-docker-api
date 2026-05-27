@@ -13,7 +13,18 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Middlewares globales --
-app.use(cors());              // Permite peticiones desde otros orígenes
+
+// CORS
+const corsOrigins = (process.env.CORS_ORIGIN || '')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
+
+app.use(cors({
+  origin: corsOrigins.length > 0 ? corsOrigins : true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+}));
+
 app.use(express.json());      // Parsea el body de las peticiones como JSON
 
 // ── Rutas --
