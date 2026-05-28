@@ -4,6 +4,8 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 
 const { initDB } = require('./config/database');
 const { register } = require('./config/metrics');
@@ -14,20 +16,50 @@ const metricsMiddleware = require('./middlewares/metricsMiddleware');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middlewares globales --
+// Estamos detrás de Caddy en producción: necesitamos confiar en X-Forwarded-*
+// para que req.ip y rate-limit funcionen con la IP real del cliente.
+app.set('trust proxy', 1);
 
-// CORS
+// Ocultar firma del framework (defensa menor pero estándar).
+app.disable('x-powered-by');
+
+// ── CORS fail-closed --
+
 const corsOrigins = (process.env.CORS_ORIGIN || '')
   .split(',')
   .map((o) => o.trim())
   .filter(Boolean);
 
+if (process.env.NODE_ENV === 'production' && corsOrigins.length === 0) {
+  throw new Error('CORS_ORIGIN es obligatorio en producción');
+}
+
 app.use(cors({
-  origin: corsOrigins.length > 0 ? corsOrigins : true,
+  origin(origin, cb) {
+    // Permitir requests sin Origin (curl, server-to-server, healthchecks).
+    if (!origin) return cb(null, true);
+    if (corsOrigins.length === 0) return cb(null, true); // dev sin CORS_ORIGIN
+    return corsOrigins.includes(origin)
+      ? cb(null, true)
+      : cb(new Error('CORS origin not allowed'));
+  },
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
 }));
 
-app.use(express.json());      // Parsea el body de las peticiones como JSON
+// Headers de seguridad (HSTS lo añade Caddy ya que es quien termina TLS).
+app.use(helmet({ hsts: false }));
+
+// Body parser con límite agresivo: la API solo recibe títulos cortos.
+app.use(express.json({ limit: '16kb' }));
+
+// Rate limit: 120 req/min por IP. Generoso para uso normal, freno para abuso.
+app.use(rateLimit({
+  windowMs: 60_000,
+  limit: 120,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+}));
+
 app.use(metricsMiddleware);   // Mide todas las peticiones (RED: rate/errors/duration)
 
 // ── Rutas --
@@ -43,9 +75,14 @@ app.get('/health', (req, res) => {
 
 app.use('/tasks', taskRoutes); // Todas las rutas de tasks
 
-// Endpoint de métricas para que Grafana Alloy lo raspe (scrape).
-// Caddy bloquea /metrics desde internet; solo se accede por loopback.
+// Endpoint de métricas para Grafana Alloy. Defensa en profundidad: Caddy
+// devuelve 404 desde internet, y aquí rechazamos cualquier request que
+// haya pasado por un proxy. Alloy raspa el contenedor directo (sin
+// X-Forwarded-For); cualquier request a través de Caddy lo lleva.
 app.get('/metrics', async (req, res) => {
+  if (req.headers['x-forwarded-for']) {
+    return res.status(404).json({ error: { message: 'Ruta no encontrada', status: 404 } });
+  }
   res.set('Content-Type', register.contentType);
   res.end(await register.metrics());
 });

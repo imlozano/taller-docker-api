@@ -1,5 +1,18 @@
 api.task-to-do.app {
+	# Bloquea /metrics desde internet (defense-in-depth con el check de Express).
 	@metrics path /metrics
 	respond @metrics 404
+
+	# Headers de seguridad. Caddy termina TLS, así que HSTS va aquí.
+	# -Server quita la firma del servidor; -X-Powered-By por si Node lo añadiera.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "geolocation=(), microphone=(), camera=()"
+		-Server
+		-X-Powered-By
+	}
+
 	reverse_proxy api:3000
 }

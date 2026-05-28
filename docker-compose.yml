@@ -2,7 +2,7 @@
 
 services:
 
-  # Servicio de la API 
+  # Servicio de la API
   api:
     build:
       context: ./app        # Busca el Dockerfile dentro de /app
@@ -24,6 +24,17 @@ services:
         condition: service_healthy  # Espera a que PostgreSQL esté listo
     networks:
       - app-network           # Red interna, no expuesta al exterior
+    # ── Hardening: privilegios mínimos para limitar el blast radius si la
+    # imagen de Node se viera comprometida (cadena de suministro, RCE, etc).
+    security_opt:
+      - "no-new-privileges:true"   # No puede escalar privilegios via setuid
+    cap_drop:
+      - ALL                        # Sin capabilities; Node no las necesita
+    read_only: true                # FS raíz inmutable; tmpfs para /tmp
+    tmpfs:
+      - /tmp
+    pids_limit: 128                # Limita explosión de procesos (fork bomb)
+    mem_limit: 256m                # Acota memoria; OOM antes de tumbar el host
 
   #Servicio de PostgreSQL
   db:
@@ -43,6 +54,19 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    # Postgres necesita escribir en /var/lib/postgresql; no podemos read_only.
+    # Aplicamos el resto del hardening estándar.
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN                   # Postgres setea ownership de su data dir
+      - SETUID
+      - SETGID
+      - DAC_READ_SEARCH
+      - FOWNER
+    mem_limit: 256m
 
   caddy:
     image: caddy:2-alpine
@@ -59,6 +83,14 @@ services:
       - app-network
     depends_on:
       - api
+    # Caddy necesita NET_BIND_SERVICE para 80/443 (no-root) y escribir certs.
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    mem_limit: 128m
 
 # Volúmenes
 # Docker gestiona este volumen. Si el contenedor se destruye, los datos en este volumen sobreviven.
@@ -67,7 +99,7 @@ volumes:
   caddy-data:
   caddy-config:
 
-#Redes 
+#Redes
 # Red interna aislada. La BD no es accesible desde internet, solo desde los servicios dentro de esta red.
 networks:
   app-network:

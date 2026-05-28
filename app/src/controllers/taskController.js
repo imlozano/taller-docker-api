@@ -3,6 +3,11 @@
 // Y devuelven la respuesta (res).
 
 const { pool } = require('../config/database');
+const {
+  parseId,
+  parseCreateTask,
+  parseUpdateTask,
+} = require('../validators/taskValidators');
 
 // GET /tasks -> Retorna todas las tareas ordenadas por fecha
 const getAllTasks = async (req, res, next) => {
@@ -23,7 +28,7 @@ const getAllTasks = async (req, res, next) => {
 // GET /tasks/:id -> Retorna una tarea por su ID
 const getTaskById = async (req, res, next) => {
   try {
-    const { id } = req.params;
+    const id = parseId(req.params.id);
     const result = await pool.query(
       'SELECT * FROM tasks WHERE id = $1',
       [id]
@@ -44,17 +49,11 @@ const getTaskById = async (req, res, next) => {
 // POST /tasks -> Crea una nueva tarea
 const createTask = async (req, res, next) => {
   try {
-    const { title } = req.body;
-
-    if (!title || title.trim() === '') {
-      const error = new Error('El campo "title" es obligatorio');
-      error.status = 400;
-      return next(error);
-    }
+    const { title } = parseCreateTask(req.body);
 
     const result = await pool.query(
       'INSERT INTO tasks (title) VALUES ($1) RETURNING *',
-      [title.trim()]
+      [title]
     );
 
     res.status(201).json({ success: true, data: result.rows[0] });
@@ -66,8 +65,8 @@ const createTask = async (req, res, next) => {
 // PUT /tasks/:id -> Actualiza una tarea (título o estado done)
 const updateTask = async (req, res, next) => {
   try {
-    const { id } = req.params;
-    const { title, done } = req.body;
+    const id = parseId(req.params.id);
+    const { title, done } = parseUpdateTask(req.body);
 
     const result = await pool.query(
       `UPDATE tasks
@@ -93,7 +92,7 @@ const updateTask = async (req, res, next) => {
 // DELETE /tasks/:id -> Elimina una tarea por su ID
 const deleteTask = async (req, res, next) => {
   try {
-    const { id } = req.params;
+    const id = parseId(req.params.id);
     const result = await pool.query(
       'DELETE FROM tasks WHERE id = $1 RETURNING *',
       [id]

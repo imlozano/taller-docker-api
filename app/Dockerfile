@@ -4,6 +4,7 @@ WORKDIR /app
 
 # Evita el prompt de descarga de Corepack al instalar pnpm desde packageManager
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+ENV NODE_ENV=production
 
 # Copiar PRIMERO solo los archivos de dependencias.
 # Docker cachea capas: si estos archivos no cambian,
@@ -18,11 +19,19 @@ COPY package.json pnpm-lock.yaml .npmrc ./
 RUN corepack enable \
  && pnpm install --frozen-lockfile --prod --ignore-scripts
 
-# Copiar el resto del código fuente
-COPY . .
+# Copiar el resto del código fuente con ownership del usuario no-root.
+COPY --chown=node:node . .
+
+# Correr como usuario no-root (viene incluido en la imagen node:alpine).
+USER node
 
 # Documentar el puerto que usa la app (solo documenta) no expone
 EXPOSE 3000
+
+# Healthcheck integrado: docker compose puede esperar a que /health responda
+# antes de marcar el contenedor como healthy. wget viene con alpine.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD wget -qO- http://127.0.0.1:3000/health >/dev/null 2>&1 || exit 1
 
 # Comando que se ejecuta cuando el contenedor arranca
 CMD ["node", "src/index.js"]
