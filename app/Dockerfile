@@ -9,8 +9,10 @@ ENV NODE_ENV=production
 # Copiar PRIMERO solo los archivos de dependencias.
 # Docker cachea capas: si estos archivos no cambian,
 # no reinstala dependencias en cada build. Esto ahorra tiempo.
-# .npmrc viaja aquí porque define defensas (ignore-scripts) que aplican durante la instalación.
-COPY package.json pnpm-lock.yaml .npmrc ./
+# pnpm-workspace.yaml viaja aquí porque define las defensas reales de pnpm 11
+# (overrides, minimumReleaseAge, strictDepBuilds). Sin él, la instalación frozen
+# falla por mismatch de overrides contra el lockfile.
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 
 # Activar pnpm vía Corepack (incluido en Node 22+) usando la versión fijada en
 # el campo "packageManager" del package.json, y luego instalar dependencias de producción

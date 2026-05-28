@@ -1,0 +1,17 @@
+# Configuración de seguridad de pnpm 11.
+# A partir de pnpm 11 los settings y overrides NO se leen del campo "pnpm" de
+# package.json ni de .npmrc (salvo auth/registry); deben vivir aquí.
+
+# Cooldown: ignora versiones publicadas hace menos de 3 días (4320 min).
+# Mitiga ataques de cadena de suministro en su ventana más vulnerable.
+minimumReleaseAge: 4320
+
+# Builds explícitos: ningún paquete corre scripts de build durante la instalación
+# salvo que se apruebe con `pnpm approve-builds`. Es el default en v11, lo dejamos
+# explícito como documentación de la defensa.
+strictDepBuilds: true
+
+# Pin de seguridad de subdependencias. qs tuvo CVEs; forzamos una versión segura
+# en todo el árbol (antes vivía en package.json, donde pnpm 11 ya no lo lee).
+overrides:
+  qs: 6.15.2
