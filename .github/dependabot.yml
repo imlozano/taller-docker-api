@@ -1,0 +1,20 @@
+# Configuracion de Dependabot.
+# Alinea las actualizaciones de rutina con el cooldown de pnpm (minimumReleaseAge):
+# ninguna version se actualiza hasta que tenga al menos 3 dias de publicada, la
+# ventana donde un paquete comprometido todavia no fue detectado.
+#
+# Nota: el cooldown aplica a "version updates" (rutina), NO a "security updates".
+# Los parches de vulnerabilidades siguen llegando sin demora, que es lo deseado.
+# Dependabot corre solo en el remoto de GitHub (no en GitLab).
+version: 2
+updates:
+  - package-ecosystem: "npm" # cubre pnpm (pnpm-lock.yaml)
+    directory: "/app" # los manifests viven en app/, no en la raiz
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 3
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(deps-dev)"
