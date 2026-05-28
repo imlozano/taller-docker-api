@@ -126,8 +126,8 @@ El pipeline está organizado en **5 stages secuenciales** que validan el código
 
 | Stage | Job | Descripción |
 |---|---|---|
-| 1. `install` | `install_dependencies` | Instala las dependencias usando `npm ci` (modo estricto basado en `package-lock.json`). Genera artefactos `node_modules` reutilizables por los siguientes jobs. |
-| 2. `audit` | `security_audit` | Ejecuta `npm audit --audit-level=high --omit=dev` para detectar vulnerabilidades de seguridad altas o críticas en dependencias de producción. |
+| 1. `install` | `install_dependencies` | Instala las dependencias con `pnpm install --frozen-lockfile --ignore-scripts` (lockfile estricto y sin scripts de lifecycle). Genera artefactos `node_modules` reutilizables por los siguientes jobs. |
+| 2. `audit` | `security_audit` | Ejecuta `pnpm audit --audit-level high --prod` para detectar vulnerabilidades de seguridad altas o críticas en dependencias de producción. |
 | 3. `lint` | `code_lint` | Ejecuta ESLint con reglas configuradas (`eqeqeq`, `quotes single`, `no-unused-vars`) para validar la calidad y consistencia del código JavaScript. |
 | 4. `build` | `docker_build` | Construye la imagen Docker (`docker build`) usando Docker-in-Docker (`docker:24-dind`) para validar que el `Dockerfile` es funcional y reproducible. |
 | 5. `deploy` | `deploy_to_production` | Despliega los cambios al servidor de producción (DigitalOcean) vía SSH. Solo se ejecuta en la rama `main` y si todos los stages anteriores pasaron correctamente. |
@@ -154,13 +154,28 @@ Las credenciales sensibles **nunca están hardcodeadas** en el pipeline. Se gest
 
 El flag `Protected` asegura que estas variables solo se exponen en pipelines ejecutados sobre ramas protegidas (como `main`), evitando que ramas no autorizadas accedan a credenciales.
 
-### Configuración de seguridad adicional
+### Seguridad de la cadena de suministro
 
-El proyecto incluye protecciones contra ataques de cadena de suministro de npm (relevantes en 2026):
+Apliqué una estrategia de defensa en profundidad contra ataques a la cadena de suministro de npm (instalar un paquete comprometido ejecuta código en mi máquina, el CI y producción). Está organizada en tres capas.
 
-- **`.npmrc`** con `ignore-scripts=true` para mitigar ataques tipo Axios (marzo 2026) y Mini Shai-Hulud (abril 2026).
-- **`save-exact=true`** para fijar versiones exactas y evitar auto-actualizaciones a versiones potencialmente comprometidas.
-- **`package-lock.json`** comprometido en el repositorio para builds reproducibles.
+> **Nota importante sobre pnpm 11:** los settings de pnpm ya **no** se leen del campo `pnpm` de `package.json` ni de `.npmrc` (salvo auth/registry). Toda la configuración de seguridad vive en `app/pnpm-workspace.yaml`, y el `Dockerfile` lo copia explícitamente para que las defensas apliquen también dentro del contenedor.
+
+#### Capa 1 — Protección del consumidor
+
+- **Scripts de instalación apagados.** La instalación corre con `--ignore-scripts` (en el `Dockerfile` y en el CI) y los builds de dependencias están bloqueados por `strictDepBuilds: true`. Los ataques recientes (p. ej. Shai-Hulud) se propagan vía scripts `preinstall`/`postinstall`; al no ejecutarlos, un paquete malicioso no corre código al instalarse.
+- **Versiones exactas.** Todas las dependencias están pineadas a una versión exacta (sin rangos `^`). Así controlo exactamente qué entra y evito saltos automáticos a una versión recién publicada y potencialmente comprometida.
+- **Cooldown (`minimumReleaseAge: 4320`).** pnpm ignora cualquier versión publicada hace menos de 3 días. Es la ventana en la que un paquete comprometido todavía no fue detectado ni retirado del registry.
+
+#### Capa 2 — Gestor de paquetes (pnpm)
+
+- **pnpm** por su store centralizado con enlaces simbólicos, que aísla mejor el árbol de dependencias.
+- **`strictDepBuilds: true` + builds explícitos.** Ningún paquete puede correr scripts de build durante la instalación salvo aprobación manual (`pnpm approve-builds`). La instalación falla si una dependencia con scripts no tiene una decisión explícita.
+- **`overrides`.** Fuerzo una versión segura de subdependencias en todo el árbol (p. ej. `qs`), sin depender de lo que resuelvan las dependencias directas.
+- **Lockfile estricto.** `--frozen-lockfile` en CI y en el build de Docker: la instalación falla si el lockfile no coincide con `package.json`, garantizando builds reproducibles y bloqueando manipulaciones del lockfile.
+
+#### Capa 3 — Auditoría en CI
+
+- El stage `audit` ejecuta `pnpm audit --audit-level high --prod` en cada push, frenando el pipeline ante vulnerabilidades altas o críticas en dependencias de producción.
 
 El servidor de producción cuenta con:
 - **UFW firewall** configurado.
