@@ -7,18 +7,31 @@ const {
   parseId,
   parseCreateTask,
   parseUpdateTask,
+  parseListQuery,
 } = require('../validators/taskValidators');
 
-// GET /tasks -> Retorna todas las tareas ordenadas por fecha
+// GET /tasks -> Lista paginada de tareas ordenadas por fecha.
+// Acepta ?limit (máx 100, def. 50) y ?offset (def. 0). Devuelve total para
+// que el cliente pueda paginar sin adivinar cuántas tareas hay.
 const getAllTasks = async (req, res, next) => {
   try {
-    const result = await pool.query(
-      'SELECT * FROM tasks ORDER BY created_at DESC'
-    );
+    const { limit, offset } = parseListQuery(req.query);
+
+    const [rowsResult, countResult] = await Promise.all([
+      pool.query(
+        'SELECT * FROM tasks ORDER BY created_at DESC LIMIT $1 OFFSET $2',
+        [limit, offset]
+      ),
+      pool.query('SELECT count(*)::int AS total FROM tasks'),
+    ]);
+
     res.status(200).json({
       success: true,
-      count: result.rows.length,
-      data: result.rows,
+      count: rowsResult.rows.length,
+      total: countResult.rows[0].total,
+      limit,
+      offset,
+      data: rowsResult.rows,
     });
   } catch (error) {
     next(error); // Pasa el error al errorHandler
@@ -71,7 +84,8 @@ const updateTask = async (req, res, next) => {
     const result = await pool.query(
       `UPDATE tasks
        SET title = COALESCE($1, title),
-           done  = COALESCE($2, done)
+           done  = COALESCE($2, done),
+           updated_at = now()
        WHERE id = $3
        RETURNING *`,
       [title, done, id]

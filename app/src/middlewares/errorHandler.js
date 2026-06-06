@@ -2,21 +2,21 @@
 // Los 4xx mantienen mensaje (son intencionales y útiles para el cliente).
 // Los 5xx se ocultan tras un mensaje genérico + requestId para correlacionar
 // con el log del servidor sin filtrar stack traces ni detalles internos.
-
-const { randomUUID } = require('node:crypto');
+// El requestId es el mismo que asigna pino-http (req.id), así la respuesta al
+// cliente y la línea de log comparten identificador.
 
 const errorHandler = (err, req, res, _next) => {
   const status = err.status || 500;
 
   if (status >= 500) {
-    const requestId = randomUUID();
-    console.error(`[${requestId}] ${req.method} ${req.originalUrl} ->`, err);
+    const requestId = req.id;
+    req.log.error({ err, requestId }, `${req.method} ${req.originalUrl} -> ${status}`);
     return res.status(status).json({
       error: { message: 'Internal server error', status, requestId },
     });
   }
 
-  console.error(`${req.method} ${req.originalUrl} -> ${status}: ${err.message}`);
+  req.log.warn(`${req.method} ${req.originalUrl} -> ${status}: ${err.message}`);
   res.status(status).json({
     error: { message: err.message || 'Bad request', status },
   });

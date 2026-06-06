@@ -1,4 +1,7 @@
-FROM node:22-alpine
+# Imagen base fijada por digest (no solo por tag mutable): garantiza builds
+# reproducibles y bloquea que un tag repintado introduzca contenido distinto.
+# Actualizar el digest es un cambio explícito y revisable (lo gestiona Dependabot).
+FROM node:22-alpine@sha256:968df39aedcea65eeb078fb336ed7191baf48f972b4479711397108be0966920
 
 WORKDIR /app
 
@@ -30,10 +33,11 @@ USER node
 # Documentar el puerto que usa la app (solo documenta) no expone
 EXPOSE 3000
 
-# Healthcheck integrado: docker compose puede esperar a que /health responda
-# antes de marcar el contenedor como healthy. wget viene con alpine.
+# Healthcheck integrado: usa readiness (/health/ready) para que el contenedor
+# se marque healthy solo cuando además puede hablar con PostgreSQL. wget viene
+# con alpine.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD wget -qO- http://127.0.0.1:3000/health >/dev/null 2>&1 || exit 1
+  CMD wget -qO- http://127.0.0.1:3000/health/ready >/dev/null 2>&1 || exit 1
 
 # Comando que se ejecuta cuando el contenedor arranca
-CMD ["node", "src/index.js"]
+CMD ["node", "src/server.js"]

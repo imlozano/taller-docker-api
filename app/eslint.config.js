@@ -31,6 +31,16 @@ module.exports = [
   },
 
   {
+    // Los archivos de test usan los globals de Jest (describe, test, expect, jest).
+    files: ['tests/**/*.js'],
+    languageOptions: {
+      globals: {
+        ...globals.jest,
+      },
+    },
+  },
+
+  {
     // Ignorar carpetas que no necesitan lint
     ignores: ['node_modules/**', 'coverage/**'],
   },

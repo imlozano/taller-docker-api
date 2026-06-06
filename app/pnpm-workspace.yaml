@@ -15,3 +15,13 @@ strictDepBuilds: true
 # en todo el árbol (antes vivía en package.json, donde pnpm 11 ya no lo lee).
 overrides:
   qs: 6.15.2
+
+# Decisión explícita sobre dependencias con scripts de build: NO los ejecutamos.
+# unrs-resolver (resolver nativo, transitivo de tooling de dev) tiene fallback JS,
+# así que no necesita compilar. Declararlo aquí evita que strictDepBuilds aborte
+# la instalación, sin abrir la puerta a ejecutar scripts arbitrarios.
+ignoredBuiltDependencies:
+  - unrs-resolver
+
+allowBuilds:
+  unrs-resolver: false

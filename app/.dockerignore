@@ -4,3 +4,9 @@ npm-debug.log
 .git
 .gitignore
 README.md
+
+# Código de test y artefactos: no van en la imagen de producción.
+# (migrations/ SÍ se incluye: se aplica al arrancar el contenedor.)
+tests
+jest.config.js
+coverage

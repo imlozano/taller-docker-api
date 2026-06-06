@@ -1,20 +1,23 @@
-// Punto de entrada del servidor. Aquí se articulan todas las piezas:
-// middlewares, rutas y la conexión a la BD.
+// Construye y exporta la instancia de Express (middlewares + rutas + errores).
+// NO arranca el servidor ni abre conexiones: eso vive en server.js.
+// Separar construcción de arranque permite montar la app en tests (Supertest)
+// sin ocupar un puerto.
 
-require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+const pinoHttp = require('pino-http');
+const { randomUUID } = require('node:crypto');
 
-const { initDB } = require('./config/database');
+const { pool } = require('./config/database');
 const { register } = require('./config/metrics');
+const logger = require('./config/logger');
 const taskRoutes = require('./routes/taskRoutes');
 const errorHandler = require('./middlewares/errorHandler');
 const metricsMiddleware = require('./middlewares/metricsMiddleware');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
 
 // Estamos detrás de Caddy en producción: necesitamos confiar en X-Forwarded-*
 // para que req.ip y rate-limit funcionen con la IP real del cliente.
@@ -22,6 +25,19 @@ app.set('trust proxy', 1);
 
 // Ocultar firma del framework (defensa menor pero estándar).
 app.disable('x-powered-by');
+
+// Logging por request: asigna un requestId (reusa X-Request-Id si viene del
+// proxy) y lo expone en req.id / req.log. Ese mismo id se devuelve al cliente
+// en los errores 5xx, así un usuario puede citarlo y correlacionar con el log.
+app.use(pinoHttp({
+  logger,
+  genReqId: (req, res) => {
+    const existing = req.headers['x-request-id'];
+    const id = existing || randomUUID();
+    res.setHeader('X-Request-Id', id);
+    return id;
+  },
+}));
 
 // ── CORS fail-closed --
 
@@ -63,7 +79,7 @@ app.use(rateLimit({
 app.use(metricsMiddleware);   // Mide todas las peticiones (RED: rate/errors/duration)
 
 // ── Rutas --
-// Health check: Para verificar que el servidor está vivo
+// Liveness: el proceso está vivo y aceptando peticiones. NO toca la BD.
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'ok',
@@ -71,6 +87,19 @@ app.get('/health', (req, res) => {
     version: require('../package.json').version,
     environment: process.env.NODE_ENV || 'production',
   });
+});
+
+// Readiness: ¿puede la app servir tráfico real? Verifica la BD con un SELECT 1.
+// Devuelve 503 si Postgres no responde, para que el orquestador no le mande
+// tráfico (y el healthcheck de Docker lo marque unhealthy).
+app.get('/health/ready', async (req, res) => {
+  try {
+    await pool.query('SELECT 1');
+    res.status(200).json({ status: 'ready' });
+  } catch (err) {
+    req.log?.error({ err }, 'readiness check falló: BD no disponible');
+    res.status(503).json({ status: 'unavailable', reason: 'database' });
+  }
 });
 
 app.use('/tasks', taskRoutes); // Todas las rutas de tasks
@@ -95,17 +124,4 @@ app.use((req, res) => {
 // ── Manejo global de errores --
 app.use(errorHandler);
 
-// ── Arranque del servidor --
-const start = async () => {
-  try {
-    await initDB();           // Inicializa la tabla en PostgreSQL
-    app.listen(PORT, () => {
-      console.log(`Servidor corriendo en http://localhost:${PORT}`);
-    });
-  } catch (error) {
-    console.error('Error al iniciar el servidor:', error.message);
-    process.exit(1);           // Si falla la BD, el proceso termina
-  }
-};
-
-start();
+module.exports = app;
