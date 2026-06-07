@@ -129,9 +129,7 @@ image_scan:
     entrypoint: [""]
   script:
     - echo "Escaneando la imagen con Trivy..."
-    - trivy image --input $APP_DIR/image.tar
-        --severity HIGH,CRITICAL --ignore-unfixed
-        --exit-code 1 --no-progress
+    - trivy image --input "$APP_DIR/image.tar" --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --no-progress
     - echo "Imagen sin vulnerabilidades HIGH/CRITICAL con fix"
 
 # ------------------------------------------------------------

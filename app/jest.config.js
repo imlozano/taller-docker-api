@@ -3,6 +3,9 @@
 
 module.exports = {
   testEnvironment: 'node',
+  // Los tests comparten una misma BD (se hace TRUNCATE entre cada uno), así que
+  // deben correr en serie aunque alguien olvide el flag --runInBand.
+  maxWorkers: 1,
   // Carga variables de entorno (DB_*, NODE_ENV=test) antes de cargar la app.
   setupFiles: ['<rootDir>/tests/setup-env.js'],
   // Aplica migraciones una vez antes de toda la suite.

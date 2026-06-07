@@ -1,10 +1,11 @@
 # Observabilidad
 
 La API expone métricas Prometheus en `/metrics` (método **RED**: Rate, Errors, Duration)
-más las métricas por defecto de Node.js (heap, event loop, GC). El endpoint solo es accesible
-desde dentro de la red Docker: Caddy lo bloquea desde internet y la app rechaza cualquier
-request con cabecera `X-Forwarded-For` (defensa en profundidad). El scrapeo lo hace
-**Grafana Alloy** contra el contenedor directamente.
+más las métricas por defecto de Node.js (heap, event loop, GC). El endpoint **no es accesible
+desde internet**: Caddy lo bloquea y la app rechaza cualquier request con cabecera
+`X-Forwarded-For` (defensa en profundidad). Sí es accesible desde el host (el `api` publica
+`127.0.0.1:${PORT}:3000`) y desde la red Docker; el scrapeo lo hace **Grafana Alloy** contra el
+contenedor directamente.
 
 ## Métricas clave
 

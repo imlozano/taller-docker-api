@@ -19,7 +19,7 @@ const getAllTasks = async (req, res, next) => {
 
     const [rowsResult, countResult] = await Promise.all([
       pool.query(
-        'SELECT * FROM tasks ORDER BY created_at DESC LIMIT $1 OFFSET $2',
+        'SELECT * FROM tasks ORDER BY created_at DESC, id DESC LIMIT $1 OFFSET $2',
         [limit, offset]
       ),
       pool.query('SELECT count(*)::int AS total FROM tasks'),
