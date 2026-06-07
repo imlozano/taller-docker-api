@@ -21,8 +21,13 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 # el campo "packageManager" del package.json, y luego instalar dependencias de producción
 # con el lockfile congelado. --ignore-scripts refuerza la defensa contra scripts
 # maliciosos en preinstall/postinstall (mitiga incidentes tipo TanStack 2026).
+# Tras instalar, eliminamos el npm que trae la imagen base: usamos pnpm en runtime,
+# no npm, y su copia empaquetada arrastra CVEs (p. ej. picomatch ReDoS) que no
+# queremos en producción. Quitarlo cierra esa vía y reduce la superficie de ataque.
 RUN corepack enable \
- && pnpm install --frozen-lockfile --prod --ignore-scripts
+ && pnpm install --frozen-lockfile --prod --ignore-scripts \
+ && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx \
+ && rm -rf /root/.cache /root/.npm
 
 # Copiar el resto del código fuente con ownership del usuario no-root.
 COPY --chown=node:node . .
