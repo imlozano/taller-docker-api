@@ -1,54 +1,61 @@
 # Tasks API — Taller Docker Compose 🐳
 
-API REST para gestión de tareas construida con **Node.js + Express + PostgreSQL**, desplegada con **Docker Compose** e integrada con **GitLab CI/CD**.
+API REST para gestión de tareas construida con **Node.js 22 + Express 5 + PostgreSQL 16**,
+desplegada con **Docker Compose** detrás de **Caddy** (TLS automático) e integrada con
+**GitLab CI/CD** (tests, escaneo de imagen y despliegue con rollback automático).
 
 ## Arquitectura
 
 ![Arquitectura](image.png)
 
 ```
-┌─────────────────────────────────────────┐
-│           Docker Compose                │
-│                                         │
-│  ┌──────────────┐    ┌───────────────┐  │
-│  │  tasks-api   │───▶│   tasks-db    │  │
-│  │  Node.js     │    │  PostgreSQL   │  │
-│  │  :3000       │    │  :5432        │  │
-│  └──────────────┘    └───────────────┘  │
-│         │                   │           │
-│         └────app-network────┘           │
-│                    │                    │
-│            postgres-data (volumen)      │
-└─────────────────────────────────────────┘
+                    Internet (HTTPS)
+                          │
+                          ▼
+        ┌───────────────────────────────────────────┐
+        │              Docker Compose                │
+        │                                            │
+        │   ┌─────────┐   ┌──────────┐  ┌─────────┐  │
+        │   │  Caddy  │──▶│ tasks-api│─▶│ tasks-db│  │
+        │   │ :80/:443│   │ Node :3000│  │ PG :5432│  │
+        │   │  TLS    │   └──────────┘  └─────────┘  │
+        │   └─────────┘        │             │       │
+        │        └────── app-network ────────┘       │
+        │                      │                     │
+        │             postgres-data (volumen)        │
+        └───────────────────────────────────────────┘
+                          ▲
+                Grafana Alloy raspa /metrics
+                (directo al contenedor, sin proxy)
 ```
+
+- **Caddy** termina TLS (HTTPS) y hace de reverse proxy. La API no se expone directamente a
+  internet: solo escucha en `127.0.0.1` dentro del host.
+- **tasks-api** corre como usuario no-root, con FS de solo lectura y capabilities mínimas.
+- **tasks-db** persiste en el volumen `postgres-data`.
 
 ## Servicios
 
-| Servicio | Imagen | Puerto | Descripción |
+| Servicio | Imagen (fijada por digest) | Puerto | Descripción |
 |---|---|---|---|
-| `tasks-api` | Node.js 20 Alpine | 3000 | API REST |
-| `tasks-db` | PostgreSQL 16 Alpine | 5432 (interno) | Base de datos |
+| `tasks-caddy` | `caddy:2-alpine` | 80/443 | Reverse proxy + TLS |
+| `tasks-api` | `node:22-alpine` | 3000 (solo `127.0.0.1`) | API REST |
+| `tasks-db` | `postgres:16-alpine` | 5432 (interno) | Base de datos |
 
 ## Correr localmente
 
 ### Prerrequisitos
-- Docker Desktop instalado
+- Docker Desktop
 - Git
 
 ### Pasos
 ```bash
-# 1. Clonar el repositorio
 git clone https://gitlab.com/imlozano/taller-docker-api.git
 cd taller-docker-api
 
-# 2. Crear el archivo de variables de entorno
-cp .env.example .env
-# Editar .env con tus valores
+cp .env.example .env          # editar con tus valores (DB_PASSWORD, etc.)
 
-# 3. Levantar los contenedores
-docker compose up --build
-
-# 4. Verificar que funciona
+docker compose up --build     # levanta caddy + api + db
 curl http://localhost:3000/health
 ```
 
@@ -56,12 +63,17 @@ curl http://localhost:3000/health
 
 | Método | Ruta | Descripción |
 |---|---|---|
-| GET | `/health` | Estado del servidor (incluye version y environment) |
-| GET | `/tasks` | Listar todas las tareas |
+| GET | `/health` | **Liveness**: el proceso está vivo (no toca la BD) |
+| GET | `/health/ready` | **Readiness**: verifica la BD con `SELECT 1` (200 / 503) |
+| GET | `/tasks?limit=&offset=` | Listar tareas paginadas (limit máx 100, def. 50) |
 | GET | `/tasks/:id` | Obtener tarea por ID |
 | POST | `/tasks` | Crear tarea |
-| PUT | `/tasks/:id` | Actualizar tarea |
+| PUT | `/tasks/:id` | Actualizar tarea (`title` y/o `done`) |
 | DELETE | `/tasks/:id` | Eliminar tarea |
+| GET | `/metrics` | Métricas Prometheus (solo acceso interno, ver Observabilidad) |
+
+La validación de entrada usa **Zod**; las respuestas de error 5xx ocultan detalles internos y
+devuelven un `requestId` (también en la cabecera `X-Request-Id`) para correlacionar con los logs.
 
 ### Ejemplos
 ```bash
@@ -70,15 +82,16 @@ curl -X POST http://localhost:3000/tasks \
   -H "Content-Type: application/json" \
   -d '{"title": "Mi nueva tarea"}'
 
-# Listar tareas
-curl http://localhost:3000/tasks
+# Listar paginado
+curl "http://localhost:3000/tasks?limit=10&offset=0"
+# -> { "success": true, "count": 10, "total": 42, "limit": 10, "offset": 0, "data": [...] }
 
 # Marcar como completada
 curl -X PUT http://localhost:3000/tasks/1 \
   -H "Content-Type: application/json" \
   -d '{"done": true}'
 
-# Eliminar tarea
+# Eliminar
 curl -X DELETE http://localhost:3000/tasks/1
 ```
 
@@ -87,6 +100,8 @@ curl -X DELETE http://localhost:3000/tasks/1
 | Variable | Descripción | Ejemplo |
 |---|---|---|
 | `PORT` | Puerto del servidor | `3000` |
+| `LOG_LEVEL` | Nivel de log de pino | `info` |
+| `CORS_ORIGIN` | Orígenes permitidos (coma) — **obligatorio en producción** | `https://task-to-do.app` |
 | `DB_HOST` | Host de la BD | `db` |
 | `DB_PORT` | Puerto de PostgreSQL | `5432` |
 | `DB_NAME` | Nombre de la base de datos | `tasksdb` |
@@ -95,104 +110,140 @@ curl -X DELETE http://localhost:3000/tasks/1
 
 > ⚠️ Nunca subir el archivo `.env` al repositorio.
 
+## Tests
+
+Suite de **integración** (Jest + Supertest) que corre contra un **PostgreSQL efímero real**
+(sin mocks de BD): valida el CRUD, la validación Zod, los 404, los bordes de seguridad y el
+manejo de errores 5xx. El umbral de cobertura rompe el build si baja.
+
+```bash
+cd app
+# Postgres desechable para los tests
+docker run -d --name pg-test -p 5433:5432 \
+  -e POSTGRES_USER=taskuser -e POSTGRES_PASSWORD=testpass -e POSTGRES_DB=tasksdb_test \
+  postgres:16-alpine
+
+DB_HOST=127.0.0.1 DB_PORT=5433 DB_NAME=tasksdb_test \
+DB_USER=taskuser DB_PASSWORD=testpass pnpm test:coverage
+```
+
+## Migraciones de base de datos
+
+El esquema se gestiona con **node-pg-migrate** (migraciones versionadas en `app/migrations/`),
+no con un `CREATE TABLE` improvisado. Las migraciones pendientes se aplican **automáticamente al
+arrancar la API**, antes de aceptar tráfico (no hace falta correr nada a mano en el deploy).
+
+Para ejecutarlas manualmente, el CLI lee `DATABASE_URL`:
+
+```bash
+cd app
+DATABASE_URL="postgres://taskuser:PASS@127.0.0.1:5432/tasksdb" pnpm migrate up    # aplicar
+DATABASE_URL="postgres://taskuser:PASS@127.0.0.1:5432/tasksdb" pnpm migrate down  # revertir
+```
+
+## Fiabilidad
+
+- **Graceful shutdown**: ante `SIGTERM`/`SIGINT` (lo que envía `docker compose down`), la API
+  deja de aceptar conexiones, drena el pool de PostgreSQL y sale limpio (con timeout de seguridad).
+- **Readiness real**: `/health/ready` verifica la BD; el `HEALTHCHECK` de Docker lo usa, así que
+  un contenedor solo se marca `healthy` cuando de verdad puede servir tráfico.
+- **Paginación**: `GET /tasks` está acotado (`limit` máx 100) para no degradar con el tamaño de
+  la tabla.
+
+## Observabilidad
+
+- **Logs estructurados** (JSON) con **pino**: cada request lleva un `requestId` que se propaga al
+  log y se devuelve al cliente en los errores 5xx → correlación inmediata.
+- **Métricas Prometheus** (`/metrics`, método RED) raspadas por **Grafana Alloy**. El endpoint
+  está bloqueado desde internet (Caddy) y rechaza requests con `X-Forwarded-For` (defensa en
+  profundidad).
+- **Dashboard de Grafana** versionado como código en
+  [`observability/`](observability/) (Rate / Errors / Duration + salud del proceso).
+
+## Hardening de contenedores
+
+Cada servicio corre con privilegios mínimos para acotar el *blast radius* ante un compromiso:
+
+- `no-new-privileges`, `cap_drop: ALL` (con solo las capabilities imprescindibles por servicio).
+- `tasks-api`: usuario **no-root**, **FS de solo lectura** (`read_only` + `tmpfs` para `/tmp`),
+  `pids_limit` y `mem_limit`.
+- Imágenes base **fijadas por digest** (`@sha256:…`), no solo por tag mutable.
+
 ## Persistencia de datos
 
-Los datos de PostgreSQL se almacenan en el volumen `postgres-data`. Al ejecutar `docker compose down`, los datos **no se eliminan**. Solo se eliminan con:
-```bash
-docker compose down -v  # El flag -v elimina los volúmenes
-```
+Los datos viven en el volumen `postgres-data` y sobreviven a `docker compose down`. Solo se
+borran con `docker compose down -v`.
 
 ## Despliegue
 
-La aplicación está desplegada en DigitalOcean con despliegue automático.
+Desplegado en **DigitalOcean** detrás de Caddy con TLS automático. Acceso público vía HTTPS en
+el dominio configurado (`api.task-to-do.app`); el puerto 3000 **no** está expuesto a internet.
 
-**URL pública:** `http://134.199.218.201:3000`
+El servidor cuenta además con **UFW**, **fail2ban** y una **llave SSH dedicada** solo para el
+deploy automatizado.
 
 ---
 
-## 🚀 Pipeline de CI/CD
+## 🚀 Pipeline de CI/CD (GitLab)
 
-Este proyecto cuenta con un pipeline de Integración Continua y Despliegue Continuo (CI/CD) configurado en **GitLab CI/CD**, definido en el archivo `.gitlab-ci.yml` ubicado en la raíz del repositorio.
-
-### ¿Cómo se activa?
-
-El pipeline **se dispara automáticamente** ante cualquier `git push` al repositorio. El estado del pipeline (éxito o fallo) es visible en la sección **Build -> Pipelines** de GitLab.
-
-No requiere ejecución manual. Cada commit empujado a la rama `main` ejecuta el flujo completo, incluyendo el despliegue al servidor de producción.
-
-### ¿Qué hace el pipeline?
-
-El pipeline está organizado en **5 stages secuenciales** que validan el código y lo despliegan automáticamente:
+Definido en `.gitlab-ci.yml`. Se dispara en cada `git push`; el despliegue solo corre en `main`.
 
 | Stage | Job | Descripción |
 |---|---|---|
-| 1. `install` | `install_dependencies` | Instala las dependencias con `pnpm install --frozen-lockfile --ignore-scripts` (lockfile estricto y sin scripts de lifecycle). Genera artefactos `node_modules` reutilizables por los siguientes jobs. |
-| 2. `audit` | `security_audit` | Ejecuta `pnpm audit --audit-level high --prod` para detectar vulnerabilidades de seguridad altas o críticas en dependencias de producción. |
-| 3. `lint` | `code_lint` | Ejecuta ESLint con reglas configuradas (`eqeqeq`, `quotes single`, `no-unused-vars`) para validar la calidad y consistencia del código JavaScript. |
-| 4. `build` | `docker_build` | Construye la imagen Docker (`docker build`) usando Docker-in-Docker (`docker:24-dind`) para validar que el `Dockerfile` es funcional y reproducible. |
-| 5. `deploy` | `deploy_to_production` | Despliega los cambios al servidor de producción (DigitalOcean) vía SSH. Solo se ejecuta en la rama `main` y si todos los stages anteriores pasaron correctamente. |
+| 1. `install` | `install_dependencies` | `pnpm install --frozen-lockfile --ignore-scripts`. Artefacto `node_modules` reutilizable. |
+| 2. `audit` | `security_audit` | `pnpm audit --audit-level high --prod`: frena ante CVEs altas/críticas en deps. |
+| 3. `lint` | `code_lint` | ESLint (`eqeqeq`, `quotes single`, `no-unused-vars`). |
+| 4. `test` | `code_test` | **Jest + Supertest** contra un Postgres `service` efímero, con umbral de cobertura. |
+| 5. `build` | `docker_build` | Construye la imagen y la exporta como artefacto (`image.tar`). |
+| 6. `scan` | `image_scan` | **Trivy** escanea la imagen; falla ante HIGH/CRITICAL con fix. |
+| 7. `deploy` | `deploy_to_production` | Deploy SSH a producción con **verificación + rollback** (solo `main`). |
 
-### Flujo del despliegue automático (stage `deploy`)
+### Despliegue con verificación y rollback
 
-1. Configura el cliente SSH usando la llave privada inyectada desde Variables Protegidas.
-2. Se conecta al servidor mediante `ssh $DEPLOY_USER@$DEPLOY_HOST`.
-3. En el servidor, ejecuta:
-   - `git pull origin main` para traer los últimos cambios.
-   - `docker compose down` para detener los contenedores actuales.
-   - `docker compose up -d --build` para reconstruir y levantar la nueva versión.
-4. Verifica el estado de los contenedores con `docker ps`.
+1. Guarda el commit actual (`PREV`) **antes** de sincronizar.
+2. `git fetch origin main && git reset --hard origin/main` (idempotente, resiliente a force-push).
+3. `docker compose up -d --build`.
+4. **Sondea** el estado de salud del contenedor (`tasks-api` → `healthy`, que internamente es la
+   readiness contra la BD) con reintentos.
+5. Si no llega a `healthy`, hace **rollback automático** al commit `PREV`, reconstruye y marca el
+   pipeline en rojo. Sin ventanas de servicio caído por un mal despliegue.
 
 ### Variables Protegidas de GitLab
 
-Las credenciales sensibles **nunca están hardcodeadas** en el pipeline. Se gestionan desde **Settings → CI/CD → Variables** en GitLab:
-
-| Variable | Tipo | Flag | Uso |
-|---|---|---|---|
-| `SSH_PRIVATE_KEY` | File | Protected | Llave SSH privada para autenticarse al servidor |
-| `DEPLOY_USER` | Variable | Protected | Usuario SSH del servidor (`root`) |
-| `DEPLOY_HOST` | Variable | Protected | IP pública del servidor |
-
-El flag `Protected` asegura que estas variables solo se exponen en pipelines ejecutados sobre ramas protegidas (como `main`), evitando que ramas no autorizadas accedan a credenciales.
+| Variable | Tipo | Uso |
+|---|---|---|
+| `SSH_PRIVATE_KEY` | File / Protected | Llave SSH privada para el servidor |
+| `DEPLOY_USER` / `DEPLOY_HOST` | Protected | Usuario e IP del servidor |
+| `SSH_KNOWN_HOSTS` | Protected (recomendado) | Host key fijado del servidor (evita MITM; si falta, se usa `ssh-keyscan` en modo TOFU) |
 
 ### Seguridad de la cadena de suministro
 
-Apliqué una estrategia de defensa en profundidad contra ataques a la cadena de suministro de npm (instalar un paquete comprometido ejecuta código en mi máquina, el CI y producción). Está organizada en tres capas.
+Defensa en profundidad contra ataques a la cadena de suministro de npm, en tres capas.
 
-> **Nota importante sobre pnpm 11:** los settings de pnpm ya **no** se leen del campo `pnpm` de `package.json` ni de `.npmrc` (salvo auth/registry). Toda la configuración de seguridad vive en `app/pnpm-workspace.yaml`, y el `Dockerfile` lo copia explícitamente para que las defensas apliquen también dentro del contenedor.
+> **Nota sobre pnpm 11:** los settings y `overrides` ya **no** se leen del campo `pnpm` de
+> `package.json` ni de `.npmrc` (salvo auth/registry). Toda la configuración vive en
+> `app/pnpm-workspace.yaml`, y el `Dockerfile` lo copia explícitamente.
 
-#### Capa 1 — Protección del consumidor
+**Capa 1 — Protección del consumidor**
+- Scripts de instalación apagados (`--ignore-scripts` + `strictDepBuilds: true`); las pocas deps
+  con build se deciden explícitamente (`ignoredBuiltDependencies`).
+- Versiones **exactas** (sin rangos `^`).
+- **Cooldown** (`minimumReleaseAge: 4320`): ignora versiones con menos de 3 días.
 
-- **Scripts de instalación apagados.** La instalación corre con `--ignore-scripts` (en el `Dockerfile` y en el CI) y los builds de dependencias están bloqueados por `strictDepBuilds: true`. Los ataques recientes (p. ej. Shai-Hulud) se propagan vía scripts `preinstall`/`postinstall`; al no ejecutarlos, un paquete malicioso no corre código al instalarse.
-- **Versiones exactas.** Todas las dependencias están pineadas a una versión exacta (sin rangos `^`). Así controlo exactamente qué entra y evito saltos automáticos a una versión recién publicada y potencialmente comprometida.
-- **Cooldown (`minimumReleaseAge: 4320`).** pnpm ignora cualquier versión publicada hace menos de 3 días. Es la ventana en la que un paquete comprometido todavía no fue detectado ni retirado del registry.
+**Capa 2 — Gestor de paquetes (pnpm)**
+- Store centralizado con symlinks; `overrides` para fijar subdeps seguras (p. ej. `qs`).
+- **Lockfile estricto** (`--frozen-lockfile`) en CI y en el build de Docker.
 
-#### Capa 2 — Gestor de paquetes (pnpm)
-
-- **pnpm** por su store centralizado con enlaces simbólicos, que aísla mejor el árbol de dependencias.
-- **`strictDepBuilds: true` + builds explícitos.** Ningún paquete puede correr scripts de build durante la instalación salvo aprobación manual (`pnpm approve-builds`). La instalación falla si una dependencia con scripts no tiene una decisión explícita.
-- **`overrides`.** Fuerzo una versión segura de subdependencias en todo el árbol (p. ej. `qs`), sin depender de lo que resuelvan las dependencias directas.
-- **Lockfile estricto.** `--frozen-lockfile` en CI y en el build de Docker: la instalación falla si el lockfile no coincide con `package.json`, garantizando builds reproducibles y bloqueando manipulaciones del lockfile.
-
-#### Capa 3 — Auditoría en CI
-
-- El stage `audit` ejecuta `pnpm audit --audit-level high --prod` en cada push, frenando el pipeline ante vulnerabilidades altas o críticas en dependencias de producción.
-
-El servidor de producción cuenta con:
-- **UFW firewall** configurado.
-- **fail2ban** monitoreando intentos de autenticación SSH.
-- **Llave SSH dedicada** exclusivamente para el deploy automatizado.
+**Capa 3 — Auditoría y escaneo en CI**
+- `pnpm audit` (deps) **+ Trivy** (imagen completa, incluido el SO base) en cada push.
 
 ## Comandos útiles
 ```bash
-# Levantar en segundo plano
-docker compose up -d
+docker compose up -d            # segundo plano
+docker compose logs -f          # logs
+docker compose down             # apagar (conserva datos)
+docker ps                       # contenedores corriendo
 
-# Ver logs
-docker compose logs -f
-
-# Apagar contenedores
-docker compose down
-
-# Ver contenedores corriendo
-docker ps
+cd app && pnpm test:coverage    # tests + cobertura
+cd app && pnpm lint             # estilo
 ```

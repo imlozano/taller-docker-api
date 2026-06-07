@@ -18,6 +18,13 @@ const updateTaskSchema = z
     message: 'Debe enviar al menos title o done',
   });
 
+// Paginación de GET /tasks: limit acotado (máx 100) y offset no negativo.
+// Coaccionamos desde query string (siempre llega como texto) y damos defaults.
+const listQuerySchema = z.object({
+  limit: z.coerce.number().int().positive().max(100).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+
 const parseOrThrow = (schema, value) => {
   const parsed = schema.safeParse(value);
   if (parsed.success) return parsed.data;
@@ -30,4 +37,5 @@ module.exports = {
   parseId: (raw) => parseOrThrow(idSchema, raw),
   parseCreateTask: (raw) => parseOrThrow(createTaskSchema, raw),
   parseUpdateTask: (raw) => parseOrThrow(updateTaskSchema, raw),
+  parseListQuery: (raw) => parseOrThrow(listQuerySchema, raw),
 };

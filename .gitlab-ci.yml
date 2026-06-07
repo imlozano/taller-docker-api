@@ -2,7 +2,8 @@
 # Pipeline de CI/CD para taller-docker-api
 # ============================================================
 # Se ejecuta automaticamente en cada push al repositorio.
-# Valida el codigo y lo despliega al servidor de produccion.
+# Valida el codigo (install -> audit -> lint -> test -> build -> scan)
+# y lo despliega al servidor de produccion con verificacion + rollback.
 # ============================================================
 
 image: node:22-alpine
@@ -16,7 +17,9 @@ stages:
   - install
   - audit
   - lint
+  - test
   - build
+  - scan
   - deploy
 
 # ------------------------------------------------------------
@@ -62,8 +65,37 @@ code_lint:
     - echo "Codigo cumple con los estandares de calidad"
 
 # ------------------------------------------------------------
+# JOB: code_test
+# ------------------------------------------------------------
+# Tests de integracion (Supertest) contra un Postgres efimero levantado como
+# 'service'. Falla el pipeline si los tests o el umbral de cobertura no pasan.
+code_test:
+  stage: test
+  needs: ["install_dependencies"]
+  services:
+    - name: postgres:16-alpine
+      alias: postgres
+  variables:
+    POSTGRES_DB: tasksdb_test
+    POSTGRES_USER: taskuser
+    POSTGRES_PASSWORD: testpass
+    DB_HOST: postgres
+    DB_PORT: "5432"
+    DB_NAME: tasksdb_test
+    DB_USER: taskuser
+    DB_PASSWORD: testpass
+  script:
+    - echo "Ejecutando tests de integracion con cobertura..."
+    - corepack enable
+    - cd $APP_DIR
+    - pnpm test:coverage
+    - echo "Tests y cobertura OK"
+
+# ------------------------------------------------------------
 # JOB: docker_build
 # ------------------------------------------------------------
+# Construye la imagen y la exporta como artefacto (image.tar) para que el job
+# de scan la analice exactamente igual que la que se desplegaria.
 docker_build:
   stage: build
   image: docker:24
@@ -76,58 +108,91 @@ docker_build:
     - echo "Construyendo imagen Docker desde $APP_DIR/Dockerfile..."
     - cd $APP_DIR
     - docker build -t $IMAGE_NAME:$CI_COMMIT_SHORT_SHA .
-    - echo "Imagen Docker construida exitosamente"
-    - docker images $IMAGE_NAME
+    - docker save -o image.tar $IMAGE_NAME:$CI_COMMIT_SHORT_SHA
+    - echo "Imagen construida y exportada como artefacto"
+  artifacts:
+    paths:
+      - $APP_DIR/image.tar
+    expire_in: 1 hour
+
+# ------------------------------------------------------------
+# JOB: image_scan
+# ------------------------------------------------------------
+# Escaneo de vulnerabilidades de la imagen final con Trivy. Complementa el
+# 'pnpm audit' (que solo ve deps npm) cubriendo tambien el SO base. Falla ante
+# vulnerabilidades HIGH/CRITICAL que tengan fix disponible.
+image_scan:
+  stage: scan
+  needs: ["docker_build"]
+  image:
+    name: aquasec/trivy:0.58.1
+    entrypoint: [""]
+  script:
+    - echo "Escaneando la imagen con Trivy..."
+    - trivy image --input "$APP_DIR/image.tar" --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --no-progress
+    - echo "Imagen sin vulnerabilidades HIGH/CRITICAL con fix"
 
 # ------------------------------------------------------------
 # JOB: deploy_to_production
 # ------------------------------------------------------------
-# Despliega los cambios al servidor de produccion via SSH.
-# Solo se ejecuta en la rama 'main' (rama protegida) y solo
-# si todos los stages anteriores pasaron correctamente.
+# Despliega a produccion via SSH. Solo en 'main'. Verifica el estado de salud
+# (readiness) del contenedor tras el deploy y hace rollback automatico al commit
+# anterior si no llega a 'healthy'.
 #
-# Usa Variables Protegidas de GitLab (Settings > CI/CD > Variables):
+# Variables Protegidas (Settings > CI/CD > Variables):
 #   - SSH_PRIVATE_KEY: llave SSH privada (tipo File)
-#   - DEPLOY_USER: usuario SSH del servidor
-#   - DEPLOY_HOST: IP/hostname del servidor
-#
-# El servidor debe tener la llave publica correspondiente en
-# ~/.ssh/authorized_keys y el repositorio clonado en
-# ~/taller-docker-api con remote apuntando a GitLab.
+#   - DEPLOY_USER / DEPLOY_HOST: usuario e IP del servidor
+#   - SSH_KNOWN_HOSTS (opcional, recomendado): host key fijado del servidor
 # ------------------------------------------------------------
 deploy_to_production:
   stage: deploy
-  # Imagen ligera con cliente SSH instalado
   image: alpine:3.19
-  # Solo desplegar desde la rama main
   rules:
     - if: $CI_COMMIT_BRANCH == "main"
   before_script:
-    # Instalar dependencias necesarias para SSH
     - apk add --no-cache openssh-client
-    # Preparar el directorio SSH y configurar la llave privada
     - mkdir -p ~/.ssh
     - chmod 700 ~/.ssh
-    # Copiar la llave privada al lugar correcto con permisos seguros
-    # SSH_PRIVATE_KEY es de tipo File: la variable contiene la RUTA al archivo
     - cp "$SSH_PRIVATE_KEY" ~/.ssh/id_ed25519
     - chmod 600 ~/.ssh/id_ed25519
-    # Agregar el host del servidor a known_hosts para evitar prompts
-    - ssh-keyscan -H $DEPLOY_HOST >> ~/.ssh/known_hosts 2>/dev/null
+    # Preferir el host key fijado (evita MITM); si no existe, TOFU via keyscan.
+    - |
+      if [ -n "$SSH_KNOWN_HOSTS" ]; then
+        echo "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+      else
+        echo "WARN: SSH_KNOWN_HOSTS no definido; usando ssh-keyscan (TOFU)"
+        ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+      fi
+    - chmod 644 ~/.ssh/known_hosts
   script:
     - echo "Desplegando a $DEPLOY_USER@$DEPLOY_HOST..."
     - |
-      ssh $DEPLOY_USER@$DEPLOY_HOST "
+      ssh "$DEPLOY_USER@$DEPLOY_HOST" '
         set -e
-        echo '--- Entrando al directorio del proyecto ---'
         cd ~/taller-docker-api
-        echo '--- Sincronizando codigo con el remoto (idempotente y resiliente a force-push) ---'
+        PREV=$(git rev-parse HEAD)
+        echo "--- Commit actual (rollback target): $PREV ---"
+        echo "--- Sincronizando con origin/main (idempotente) ---"
         git fetch origin main
         git reset --hard origin/main
-        echo '--- Reconstruyendo y reiniciando contenedores ---'
-        docker compose down
+        echo "--- Reconstruyendo y levantando contenedores ---"
         docker compose up -d --build
-        echo '--- Verificando estado de los contenedores ---'
+        echo "--- Esperando a que tasks-api este healthy (readiness) ---"
+        status=missing
+        for i in $(seq 1 20); do
+          status=$(docker inspect -f "{{.State.Health.Status}}" tasks-api 2>/dev/null || echo missing)
+          [ "$status" = "healthy" ] && break
+          echo "  intento $i: estado=$status"
+          sleep 3
+        done
+        if [ "$status" != "healthy" ]; then
+          echo "!!! Healthcheck FALLO (estado: $status). Rollback a $PREV !!!"
+          git reset --hard "$PREV"
+          docker compose up -d --build
+          docker ps
+          exit 1
+        fi
+        echo "--- Deploy verificado: tasks-api healthy ---"
         docker ps
-      "
-    - echo "Despliegue completado exitosamente"
+      '
+    - echo "Despliegue completado y verificado exitosamente"

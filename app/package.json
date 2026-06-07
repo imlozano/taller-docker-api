@@ -1,17 +1,20 @@
 {
   "name": "taller-docker-api",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "API REST de tareas con Node.js, Express y PostgreSQL",
-  "main": "src/index.js",
+  "main": "src/server.js",
   "packageManager": "pnpm@11.1.1",
   "engines": {
     "node": ">=22"
   },
   "scripts": {
-    "start": "node src/index.js",
-    "dev": "nodemon src/index.js",
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
     "lint": "eslint .",
-    "lint:fix": "eslint . --fix"
+    "lint:fix": "eslint . --fix",
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js --runInBand",
+    "test:coverage": "node --experimental-vm-modules node_modules/jest/bin/jest.js --runInBand --coverage",
+    "migrate": "node-pg-migrate"
   },
   "dependencies": {
     "cors": "2.8.6",
@@ -19,14 +22,19 @@
     "express": "5.2.1",
     "express-rate-limit": "8.5.2",
     "helmet": "8.2.0",
+    "node-pg-migrate": "8.0.4",
     "pg": "8.21.0",
+    "pino": "10.3.1",
+    "pino-http": "11.0.0",
     "prom-client": "15.1.3",
     "zod": "4.4.3"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
-    "eslint": "10.4.0",
+    "eslint": "10.4.1",
     "globals": "17.6.0",
-    "nodemon": "3.1.14"
+    "jest": "30.4.2",
+    "nodemon": "3.1.14",
+    "supertest": "7.2.2"
   }
 }

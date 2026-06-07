@@ -1,4 +1,7 @@
-FROM node:22-alpine
+# Imagen base fijada por digest (no solo por tag mutable): garantiza builds
+# reproducibles y bloquea que un tag repintado introduzca contenido distinto.
+# Actualizar el digest es un cambio explícito y revisable (lo gestiona Dependabot).
+FROM node:22-alpine@sha256:968df39aedcea65eeb078fb336ed7191baf48f972b4479711397108be0966920
 
 WORKDIR /app
 
@@ -18,8 +21,13 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 # el campo "packageManager" del package.json, y luego instalar dependencias de producción
 # con el lockfile congelado. --ignore-scripts refuerza la defensa contra scripts
 # maliciosos en preinstall/postinstall (mitiga incidentes tipo TanStack 2026).
+# Tras instalar, eliminamos el npm que trae la imagen base: usamos pnpm en runtime,
+# no npm, y su copia empaquetada arrastra CVEs (p. ej. picomatch ReDoS) que no
+# queremos en producción. Quitarlo cierra esa vía y reduce la superficie de ataque.
 RUN corepack enable \
- && pnpm install --frozen-lockfile --prod --ignore-scripts
+ && pnpm install --frozen-lockfile --prod --ignore-scripts \
+ && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx \
+ && rm -rf /root/.cache /root/.npm
 
 # Copiar el resto del código fuente con ownership del usuario no-root.
 COPY --chown=node:node . .
@@ -30,10 +38,11 @@ USER node
 # Documentar el puerto que usa la app (solo documenta) no expone
 EXPOSE 3000
 
-# Healthcheck integrado: docker compose puede esperar a que /health responda
-# antes de marcar el contenedor como healthy. wget viene con alpine.
+# Healthcheck integrado: usa readiness (/health/ready) para que el contenedor
+# se marque healthy solo cuando además puede hablar con PostgreSQL. wget viene
+# con alpine.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD wget -qO- http://127.0.0.1:3000/health >/dev/null 2>&1 || exit 1
+  CMD wget -qO- http://127.0.0.1:3000/health/ready >/dev/null 2>&1 || exit 1
 
 # Comando que se ejecuta cuando el contenedor arranca
-CMD ["node", "src/index.js"]
+CMD ["node", "src/server.js"]

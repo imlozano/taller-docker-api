@@ -38,7 +38,8 @@ services:
 
   #Servicio de PostgreSQL
   db:
-    image: postgres:16-alpine  # Imagen oficial, versión estable y liviana
+    # Imagen oficial fijada por digest (reproducibilidad + cadena de suministro).
+    image: postgres:16-alpine@sha256:16bc17c64a573ef34162af9298258d1aec548232985b33ed7b1eac33ba35c229
     container_name: tasks-db
     restart: unless-stopped
     environment:
@@ -69,7 +70,7 @@ services:
     mem_limit: 256m
 
   caddy:
-    image: caddy:2-alpine
+    image: caddy:2-alpine@sha256:77c07d5ebfa5be9fd6c820d2094ae662c9e7eeb9bf98346b7f639900263ee2a2
     container_name: tasks-caddy
     restart: unless-stopped
     ports:

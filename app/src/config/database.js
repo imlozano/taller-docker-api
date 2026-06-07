@@ -1,6 +1,8 @@
 // Este archivo maneja TODA la comunicación con PostgreSQL.
 
+const path = require('node:path');
 const { Pool } = require('pg');
+const logger = require('./logger');
 
 // Fallar al arranque si falta alguna variable: mejor un crash temprano
 // con mensaje claro que conexiones colgadas en producción.
@@ -23,21 +25,28 @@ const pool = new Pool({
 
 // Errores asíncronos del pool (p.ej. conexión muerta) no deben tirar el proceso.
 pool.on('error', (err) => {
-  console.error('Error inesperado en cliente del pool:', err);
+  logger.error({ err }, 'Error inesperado en cliente del pool');
 });
 
-// Función para inicializar la tabla si no existe.
-// Se ejecuta una vez al arrancar el servidor.
+// Aplica las migraciones pendientes al arrancar. node-pg-migrate v8 es ESM-only,
+// por eso se carga con import() dinámico desde este módulo CommonJS. Reutiliza
+// un cliente del pool para no abrir una conexión extra.
 const initDB = async () => {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS tasks (
-      id        SERIAL PRIMARY KEY,
-      title     VARCHAR(255) NOT NULL,
-      done      BOOLEAN DEFAULT FALSE,
-      created_at TIMESTAMP DEFAULT NOW()
-    )
-  `);
-  console.log('Base de datos inicializada correctamente');
+  const { runner } = await import('node-pg-migrate');
+  const client = await pool.connect();
+  try {
+    await runner({
+      dbClient: client,
+      dir: path.join(__dirname, '..', '..', 'migrations'),
+      direction: 'up',
+      count: Infinity,
+      migrationsTable: 'pgmigrations',
+      logger,
+    });
+    logger.info('Migraciones aplicadas correctamente');
+  } finally {
+    client.release();
+  }
 };
 
 module.exports = { pool, initDB };
