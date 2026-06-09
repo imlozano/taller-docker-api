@@ -15,7 +15,6 @@ module.exports = {
   testMatch: ['<rootDir>/tests/**/*.test.js'],
   collectCoverageFrom: [
     'src/**/*.js',
-    '!src/server.js', // arranca el proceso/listener; se prueba vía Supertest sobre app.js
   ],
   coverageThreshold: {
     global: {

@@ -174,6 +174,20 @@ Cada servicio corre con privilegios mínimos para acotar el *blast radius* ante 
 Los datos viven en el volumen `postgres-data` y sobreviven a `docker compose down`. Solo se
 borran con `docker compose down -v`.
 
+### Backups
+
+`scripts/backup-db.sh` hace un `pg_dump` comprimido del contenedor `tasks-db` a `/root/backups`
+con retención de 14 días. En el servidor corre a diario vía cron (`/etc/cron.d/pg-backup`, 03:00 UTC,
+log en `/var/log/pg-backup.log`).
+
+```bash
+# Backup manual
+./scripts/backup-db.sh
+
+# Restore (sobre una BD existente)
+gunzip -c /root/backups/tasksdb-YYYY-MM-DD.sql.gz | docker exec -i tasks-db psql -U "$DB_USER" -d "$DB_NAME"
+```
+
 ## Despliegue
 
 Desplegado en **DigitalOcean** detrás de Caddy con TLS automático. Acceso público vía HTTPS en
