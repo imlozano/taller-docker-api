@@ -3,6 +3,7 @@
 
 const { Router } = require('express');
 const rateLimit = require('express-rate-limit');
+const { parsePositiveInt } = require('../config/env');
 const {
   getAllTasks,
   getTaskById,
@@ -17,7 +18,7 @@ const router = Router();
 // estricto que el global de 120/min. Overridable por env para los tests.
 const writeLimiter = rateLimit({
   windowMs: 60_000,
-  limit: Number(process.env.WRITE_RATE_LIMIT || 20),
+  limit: parsePositiveInt(process.env.WRITE_RATE_LIMIT, 20),
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   message: { error: { message: 'Demasiadas escrituras, intenta en un minuto', status: 429 } },

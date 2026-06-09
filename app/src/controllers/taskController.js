@@ -9,6 +9,11 @@ const {
   parseUpdateTask,
   parseListQuery,
 } = require('../validators/taskValidators');
+const { parsePositiveInt } = require('../config/env');
+
+// Advisory lock que serializa el check del tope + INSERT en createTask.
+// Cualquier entero sirve mientras sea único dentro de la BD.
+const TASKS_CAP_LOCK_KEY = 7341;
 
 // Error 404 estándar para "la query no devolvió filas para ese id".
 const notFound = (id) => {
@@ -65,28 +70,41 @@ const getTaskById = async (req, res, next) => {
 };
 
 // POST /tasks -> Crea una nueva tarea
-// La API es pública: hay un tope total de tareas para que el spam no crezca
-// sin límite. Se lee dentro del handler para poder ajustarlo en tests.
+// La API es pública: hay un tope total de tareas (MAX_TASKS, leído dentro del
+// handler para poder ajustarlo en tests) para que el spam no crezca sin
+// límite. COUNT + INSERT van en una transacción serializada con un advisory
+// lock: dos POST concurrentes no pueden superar el tope entre el check y el
+// insert. El coste (un lock por POST) es irrelevante a 20 escrituras/min.
 const createTask = async (req, res, next) => {
+  let client;
   try {
     const { title } = parseCreateTask(req.body);
+    const maxTasks = parsePositiveInt(process.env.MAX_TASKS, 1000);
 
-    const maxTasks = Number(process.env.MAX_TASKS || 1000);
-    const countResult = await pool.query('SELECT count(*)::int AS total FROM tasks');
+    client = await pool.connect();
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock($1)', [TASKS_CAP_LOCK_KEY]);
+
+    const countResult = await client.query('SELECT count(*)::int AS total FROM tasks');
     if (countResult.rows[0].total >= maxTasks) {
+      await client.query('ROLLBACK');
       const error = new Error('Límite de tareas alcanzado: elimina alguna antes de crear más');
       error.status = 429;
       return next(error);
     }
 
-    const result = await pool.query(
+    const result = await client.query(
       'INSERT INTO tasks (title) VALUES ($1) RETURNING *',
       [title]
     );
+    await client.query('COMMIT');
 
     res.status(201).json({ success: true, data: result.rows[0] });
   } catch (error) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
     next(error);
+  } finally {
+    client?.release();
   }
 };
 
