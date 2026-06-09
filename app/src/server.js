@@ -56,4 +56,10 @@ const setupGracefulShutdown = (server) => {
   process.on('SIGINT', () => shutdown('SIGINT'));
 };
 
-start();
+// Solo arranca cuando el proceso ejecuta este archivo directamente
+// (node src/server.js). Al requerirlo desde los tests no hace nada.
+if (require.main === module) {
+  start();
+}
+
+module.exports = { start, setupGracefulShutdown };
