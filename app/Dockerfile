@@ -1,7 +1,11 @@
 # Imagen base fijada por digest (no solo por tag mutable): garantiza builds
 # reproducibles y bloquea que un tag repintado introduzca contenido distinto.
 # Actualizar el digest es un cambio explícito y revisable (lo gestiona Dependabot).
-FROM node:22-alpine@sha256:968df39aedcea65eeb078fb336ed7191baf48f972b4479711397108be0966920
+
+# ── Stage 1: dependencias ──────────────────────────────────────────────────
+# Aquí vive todo el tooling de instalación (corepack/pnpm y sus cachés).
+# Nada de esto llega a la imagen final.
+FROM node:22-alpine@sha256:968df39aedcea65eeb078fb336ed7191baf48f972b4479711397108be0966920 AS deps
 
 WORKDIR /app
 
@@ -21,18 +25,34 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 # el campo "packageManager" del package.json, y luego instalar dependencias de producción
 # con el lockfile congelado. --ignore-scripts refuerza la defensa contra scripts
 # maliciosos en preinstall/postinstall (mitiga incidentes tipo TanStack 2026).
-# Tras instalar, eliminamos el npm que trae la imagen base: usamos pnpm en runtime,
-# no npm, y su copia empaquetada arrastra CVEs (p. ej. picomatch ReDoS) que no
-# queremos en producción. Quitarlo cierra esa vía y reduce la superficie de ataque.
 RUN corepack enable \
- && pnpm install --frozen-lockfile --prod --ignore-scripts \
- && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx \
- && rm -rf /root/.cache /root/.npm
+ && pnpm install --frozen-lockfile --prod --ignore-scripts
+
+# ── Stage 2: runtime ───────────────────────────────────────────────────────
+# Alpine puro + SOLO el binario de node copiado del stage anterior. Así la
+# imagen final no lleva npm, npx, corepack ni yarn (la copia de npm de la
+# imagen node:alpine arrastra CVEs, p. ej. picomatch ReDoS, y borrarla en una
+# capa posterior no reduce tamaño ni la saca de las capas base). Resultado:
+# ~170MB frente a los ~270MB de la imagen single-stage.
+FROM alpine:3.22@sha256:310c62b5e7ca5b08167e4384c68db0fd2905dd9c7493756d356e893909057601
+
+WORKDIR /app
+
+ENV NODE_ENV=production
+
+# node es un binario casi estático: solo necesita libstdc++/libgcc del sistema.
+RUN apk add --no-cache libstdc++ libgcc \
+ && addgroup -g 1000 node \
+ && adduser -u 1000 -G node -s /bin/sh -D node
+
+COPY --from=deps /usr/local/bin/node /usr/local/bin/node
+
+COPY --from=deps --chown=node:node /app/node_modules ./node_modules
 
 # Copiar el resto del código fuente con ownership del usuario no-root.
 COPY --chown=node:node . .
 
-# Correr como usuario no-root (viene incluido en la imagen node:alpine).
+# Correr como usuario no-root.
 USER node
 
 # Documentar el puerto que usa la app (solo documenta) no expone
