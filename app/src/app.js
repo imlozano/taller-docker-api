@@ -4,6 +4,7 @@
 // sin ocupar un puerto.
 
 const express = require('express');
+const compression = require('compression');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
@@ -46,15 +47,16 @@ const corsOrigins = (process.env.CORS_ORIGIN || '')
   .map((o) => o.trim())
   .filter(Boolean);
 
-if (process.env.NODE_ENV === 'production' && corsOrigins.length === 0) {
-  throw new Error('CORS_ORIGIN es obligatorio en producción');
+// Fail-closed en TODOS los modos: sin lista de orígenes la app no arranca.
+// Así el comportamiento de dev/test no diverge del de producción.
+if (corsOrigins.length === 0) {
+  throw new Error('CORS_ORIGIN es obligatorio (en dev usa http://localhost:3000)');
 }
 
 app.use(cors({
   origin(origin, cb) {
     // Permitir requests sin Origin (curl, server-to-server, healthchecks).
     if (!origin) return cb(null, true);
-    if (corsOrigins.length === 0) return cb(null, true); // dev sin CORS_ORIGIN
     return corsOrigins.includes(origin)
       ? cb(null, true)
       : cb(new Error('CORS origin not allowed'));
@@ -64,6 +66,9 @@ app.use(cors({
 
 // Headers de seguridad (HSTS lo añade Caddy ya que es quien termina TLS).
 app.use(helmet({ hsts: false }));
+
+// Compresión de respuestas (los listados JSON de /tasks comprimen muy bien).
+app.use(compression());
 
 // Body parser con límite agresivo: la API solo recibe títulos cortos.
 app.use(express.json({ limit: '16kb' }));
@@ -97,7 +102,7 @@ app.get('/health/ready', async (req, res) => {
     await pool.query('SELECT 1');
     res.status(200).json({ status: 'ready' });
   } catch (err) {
-    req.log?.error({ err }, 'readiness check falló: BD no disponible');
+    (req.log ?? logger).error({ err }, 'readiness check falló: BD no disponible');
     res.status(503).json({ status: 'unavailable', reason: 'database' });
   }
 });

@@ -10,6 +10,13 @@ const {
   parseListQuery,
 } = require('../validators/taskValidators');
 
+// Error 404 estándar para "la query no devolvió filas para ese id".
+const notFound = (id) => {
+  const error = new Error(`Tarea con id ${id} no encontrada`);
+  error.status = 404;
+  return error;
+};
+
 // GET /tasks -> Lista paginada de tareas ordenadas por fecha.
 // Acepta ?limit (máx 100, def. 50) y ?offset (def. 0). Devuelve total para
 // que el cliente pueda paginar sin adivinar cuántas tareas hay.
@@ -48,9 +55,7 @@ const getTaskById = async (req, res, next) => {
     );
 
     if (result.rows.length === 0) {
-      const error = new Error(`Tarea con id ${id} no encontrada`);
-      error.status = 404;
-      return next(error);
+      return next(notFound(id));
     }
 
     res.status(200).json({ success: true, data: result.rows[0] });
@@ -60,9 +65,19 @@ const getTaskById = async (req, res, next) => {
 };
 
 // POST /tasks -> Crea una nueva tarea
+// La API es pública: hay un tope total de tareas para que el spam no crezca
+// sin límite. Se lee dentro del handler para poder ajustarlo en tests.
 const createTask = async (req, res, next) => {
   try {
     const { title } = parseCreateTask(req.body);
+
+    const maxTasks = Number(process.env.MAX_TASKS || 1000);
+    const countResult = await pool.query('SELECT count(*)::int AS total FROM tasks');
+    if (countResult.rows[0].total >= maxTasks) {
+      const error = new Error('Límite de tareas alcanzado: elimina alguna antes de crear más');
+      error.status = 429;
+      return next(error);
+    }
 
     const result = await pool.query(
       'INSERT INTO tasks (title) VALUES ($1) RETURNING *',
@@ -92,9 +107,7 @@ const updateTask = async (req, res, next) => {
     );
 
     if (result.rows.length === 0) {
-      const error = new Error(`Tarea con id ${id} no encontrada`);
-      error.status = 404;
-      return next(error);
+      return next(notFound(id));
     }
 
     res.status(200).json({ success: true, data: result.rows[0] });
@@ -113,9 +126,7 @@ const deleteTask = async (req, res, next) => {
     );
 
     if (result.rows.length === 0) {
-      const error = new Error(`Tarea con id ${id} no encontrada`);
-      error.status = 404;
-      return next(error);
+      return next(notFound(id));
     }
 
     res.status(200).json({

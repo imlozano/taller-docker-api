@@ -89,6 +89,19 @@ describe('Validación y errores', () => {
     expect(res.status).toBe(400);
   });
 
+  test('POST con el tope de tareas alcanzado -> 429', async () => {
+    process.env.MAX_TASKS = '2';
+    try {
+      await request(app).post('/tasks').send({ title: 'una' });
+      await request(app).post('/tasks').send({ title: 'dos' });
+      const res = await request(app).post('/tasks').send({ title: 'tres' });
+      expect(res.status).toBe(429);
+      expect(res.body.error.message).toMatch(/Límite de tareas/);
+    } finally {
+      delete process.env.MAX_TASKS;
+    }
+  });
+
   test('error inesperado de BD -> 500 con requestId, sin filtrar detalles', async () => {
     const { pool } = require('../src/config/database');
     const spy = jest.spyOn(pool, 'query').mockRejectedValueOnce(new Error('boom interno'));

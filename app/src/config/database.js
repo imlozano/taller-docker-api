@@ -21,6 +21,10 @@ const pool = new Pool({
   max: 10,
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 5_000,
+  // Una query colgada no debe bloquear un cliente del pool indefinidamente:
+  // statement_timeout corta en el servidor, query_timeout en el driver.
+  statement_timeout: 10_000,
+  query_timeout: 10_000,
 });
 
 // Errores asíncronos del pool (p.ej. conexión muerta) no deben tirar el proceso.
